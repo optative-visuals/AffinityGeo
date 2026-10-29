@@ -1,0 +1,8 @@
+{
+  "name": "@affinitygeo/affinity-scripts",
+  "version": "0.1.0",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "type": "commonjs",
+  "description": "Scripts that run inside Affinity: poll the AffinityGeo app, list documents and artboards, and draw or update maps without overwriting hand edits."
+}

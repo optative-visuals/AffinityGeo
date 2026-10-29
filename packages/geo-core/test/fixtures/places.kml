@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>Cafe One</name>
+      <ExtendedData><Data name="seats"><value>12</value></Data></ExtendedData>
+      <Point><coordinates>-0.1276,51.5072,0</coordinates></Point>
+    </Placemark>
+    <Placemark>
+      <name>Cafe Two</name>
+      <Point><coordinates>-0.0877,51.5055,0</coordinates></Point>
+    </Placemark>
+    <Placemark>
+      <name>Green Park</name>
+      <ExtendedData>
+        <Data name="owner"><value>Crown</value></Data>
+        <Data name="hectares"><value>19</value></Data>
+      </ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>
+        -0.1450,51.5040,0 -0.1400,51.5040,0 -0.1400,51.5080,0 -0.1450,51.5080,0 -0.1450,51.5040,0
+      </coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+  </Document>
+</kml>

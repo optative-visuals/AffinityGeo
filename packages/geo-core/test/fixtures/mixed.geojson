@@ -1,0 +1,12 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    { "type": "Feature", "id": "p1", "properties": { "name": "Meadow", "area": 12.5 },
+      "geometry": { "type": "Polygon", "coordinates": [[[-1, 51], [-1, 52], [0, 52], [0, 51], [-1, 51]]] } },
+    { "type": "Feature", "properties": { "NAME": "Hill", "id": 7 },
+      "geometry": { "type": "MultiPolygon", "coordinates": [[[[1, 51], [1, 52], [2, 52], [2, 51], [1, 51]]]] } },
+    { "type": "Feature", "properties": { "name": "Town", "pop": 900, "capital": true },
+      "geometry": { "type": "Point", "coordinates": [-0.5, 51.5] } },
+    { "type": "Feature", "properties": { "name": "Ghost" }, "geometry": null }
+  ]
+}

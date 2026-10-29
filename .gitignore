@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.DS_Store
+Thumbs.db
+*.log
+coverage/
+*.tsbuildinfo
+fixtures-large/
+apps/desktop/release/
+assets/brand/export/
+*~lock~

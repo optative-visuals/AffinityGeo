@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="AffinityGeo tests" xmlns="http://www.topografix.com/GPX/1/1">
+  <wpt lat="51.5007" lon="-0.1246"><name>Big Ben</name></wpt>
+  <wpt lat="51.5033" lon="-0.1195"><name>London Eye</name></wpt>
+  <trk>
+    <name>Thames walk</name>
+    <trkseg>
+      <trkpt lat="51.5000" lon="-0.1200"><ele>10</ele></trkpt>
+      <trkpt lat="51.5010" lon="-0.1190"><ele>11</ele></trkpt>
+      <trkpt lat="51.5020" lon="-0.1180"><ele>12</ele></trkpt>
+      <trkpt lat="51.5030" lon="-0.1170"><ele>13</ele></trkpt>
+      <trkpt lat="51.5040" lon="-0.1160"><ele>14</ele></trkpt>
+      <trkpt lat="51.5050" lon="-0.1150"><ele>15</ele></trkpt>
+      <trkpt lat="51.5060" lon="-0.1140"><ele>16</ele></trkpt>
+      <trkpt lat="51.5070" lon="-0.1130"><ele>17</ele></trkpt>
+      <trkpt lat="51.5080" lon="-0.1120"><ele>18</ele></trkpt>
+      <trkpt lat="51.5090" lon="-0.1110"><ele>19</ele></trkpt>
+      <trkpt lat="51.5100" lon="-0.1100"><ele>20</ele></trkpt>
+      <trkpt lat="51.5110" lon="-0.1090"><ele>21</ele></trkpt>
+      <trkpt lat="51.5120" lon="-0.1080"><ele>22</ele></trkpt>
+      <trkpt lat="51.5130" lon="-0.1070"><ele>23</ele></trkpt>
+      <trkpt lat="51.5140" lon="-0.1060"><ele>24</ele></trkpt>
+      <trkpt lat="51.5150" lon="-0.1050"><ele>25</ele></trkpt>
+      <trkpt lat="51.5160" lon="-0.1040"><ele>26</ele></trkpt>
+      <trkpt lat="51.5170" lon="-0.1030"><ele>27</ele></trkpt>
+      <trkpt lat="51.5180" lon="-0.1020"><ele>28</ele></trkpt>
+      <trkpt lat="51.5190" lon="-0.1010"><ele>29</ele></trkpt>
+      <trkpt lat="51.5200" lon="-0.1000"><ele>30</ele></trkpt>
+      <trkpt lat="51.5210" lon="-0.0990"><ele>31</ele></trkpt>
+      <trkpt lat="51.5220" lon="-0.0980"><ele>32</ele></trkpt>
+      <trkpt lat="51.5230" lon="-0.0970"><ele>33</ele></trkpt>
+      <trkpt lat="51.5240" lon="-0.0960"><ele>34</ele></trkpt>
+      <trkpt lat="51.5250" lon="-0.0950"><ele>35</ele></trkpt>
+      <trkpt lat="51.5260" lon="-0.0940"><ele>36</ele></trkpt>
+      <trkpt lat="51.5270" lon="-0.0930"><ele>37</ele></trkpt>
+      <trkpt lat="51.5280" lon="-0.0920"><ele>38</ele></trkpt>
+      <trkpt lat="51.5290" lon="-0.0910"><ele>39</ele></trkpt>
+      <trkpt lat="51.5300" lon="-0.0900"><ele>40</ele></trkpt>
+      <trkpt lat="51.5310" lon="-0.0890"><ele>41</ele></trkpt>
+      <trkpt lat="51.5320" lon="-0.0880"><ele>42</ele></trkpt>
+      <trkpt lat="51.5330" lon="-0.0870"><ele>43</ele></trkpt>
+      <trkpt lat="51.5340" lon="-0.0860"><ele>44</ele></trkpt>
+      <trkpt lat="51.5350" lon="-0.0850"><ele>45</ele></trkpt>
+      <trkpt lat="51.5360" lon="-0.0840"><ele>46</ele></trkpt>
+      <trkpt lat="51.5370" lon="-0.0830"><ele>47</ele></trkpt>
+      <trkpt lat="51.5380" lon="-0.0820"><ele>48</ele></trkpt>
+      <trkpt lat="51.5390" lon="-0.0810"><ele>49</ele></trkpt>
+      <trkpt lat="51.5400" lon="-0.0800"><ele>50</ele></trkpt>
+      <trkpt lat="51.5410" lon="-0.0790"><ele>51</ele></trkpt>
+      <trkpt lat="51.5420" lon="-0.0780"><ele>52</ele></trkpt>
+      <trkpt lat="51.5430" lon="-0.0770"><ele>53</ele></trkpt>
+      <trkpt lat="51.5440" lon="-0.0760"><ele>54</ele></trkpt>
+      <trkpt lat="51.5450" lon="-0.0750"><ele>55</ele></trkpt>
+      <trkpt lat="51.5460" lon="-0.0740"><ele>56</ele></trkpt>
+      <trkpt lat="51.5470" lon="-0.0730"><ele>57</ele></trkpt>
+      <trkpt lat="51.5480" lon="-0.0720"><ele>58</ele></trkpt>
+      <trkpt lat="51.5490" lon="-0.0710"><ele>59</ele></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

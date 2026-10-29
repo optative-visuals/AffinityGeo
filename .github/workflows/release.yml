@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check the tag matches the app version
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $tag = $env:TAG -replace '^v', ''
+          $bad = @()
+          foreach ($file in @('package.json', 'apps/desktop/package.json')) {
+            $version = node -p "require('./$file').version"
+            if ($tag -ne $version) { $bad += "$file says $version" }
+          }
+          if ($bad.Count -gt 0) {
+            Write-Error "The tag is v$tag but $($bad -join ' and '). Set the version in both package.json files (the root one and apps/desktop), commit, then delete and re-create the tag."
+            exit 1
+          }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build:app
+      - name: Warn if the app icon is missing
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'apps/desktop/build/icon.ico')) {
+            Write-Host '::warning::No app icon — run npm run icons and commit apps/desktop/build'
+          }
+      - name: Build the installer and publish a draft release
+        run: npx electron-builder --projectDir apps/desktop --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

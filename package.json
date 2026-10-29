@@ -1,0 +1,32 @@
+{
+  "name": "affinitygeo",
+  "version": "0.1.0",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "install-scripts": "node --import tsx tools/install-scripts.mjs",
+    "serve": "tsx apps/companion/src/cli.ts serve",
+    "cli": "tsx apps/companion/src/cli.ts",
+    "fetch-fixtures": "node --import tsx tools/fetch-fixtures.mjs",
+    "build:app": "node apps/desktop/build.mjs",
+    "app": "npm run build:app && electron apps/desktop/dist/main.cjs",
+    "icons": "node tools/build-icons.mjs",
+    "dist": "npm run build:app && electron-builder --projectDir apps/desktop --publish never"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "esbuild": "0.28.2",
+    "pngjs": "7.0.0",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}
