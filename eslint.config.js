@@ -14,7 +14,6 @@ export default tseslint.config(
       "apps/desktop/build/**",
       "assets/**",
       "spikes/**",
-      ".superpowers/**",
     ],
   },
   js.configs.recommended,
