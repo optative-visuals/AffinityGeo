@@ -94,6 +94,8 @@ function useStyleEditing(serverStyle: ProjectStyle) {
       // Leaving the screen: send what's waiting rather than lose it.
       void sendWaiting();
     };
+    // Registered once for the life of the screen; `send` is read through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function flush(key: string): void {

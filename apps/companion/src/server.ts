@@ -146,7 +146,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
     throw new ApiError(404, "There's nothing at that address.");
   }
 
-  // Affinity sends results in a header (its POST bodies arrive empty). A campus map's object ids
+  // Affinity sends results in a header (its POST bodies arrive empty). A map's object ids
   // run to tens of KB, past Node's 16 KB default, which made the result vanish (live, 28 Oct).
   const server = createServer({ maxHeaderSize: 16 * 1024 * 1024 }, (req, res) => {
     handle(req, res).catch((e) => {

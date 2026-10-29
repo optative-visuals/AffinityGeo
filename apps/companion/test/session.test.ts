@@ -2,14 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { DataError, TOO_BIG, fetchOsm, parseOverpass, type Bbox } from "@affinitygeo/geo-core";
+import { TOO_BIG, fetchOsm, parseOverpass, type Bbox } from "@affinitygeo/geo-core";
 import { ApiError, ProjectSession, buildAreaPreview } from "../src/session.js";
 
-const CAMPUS: Bbox = [-0.1690, 51.5040, -0.1640, 51.5065];
+const PARKLAND: Bbox = [-0.1690, 51.5040, -0.1640, 51.5065];
 const CENTRE: [number, number] = [-0.1665, 51.505];
-const OSM = JSON.parse(readFileSync(resolve("packages/geo-core/test/project/fixtures/osm-campus.json"), "utf8"));
+const OSM = JSON.parse(readFileSync(resolve("packages/geo-core/test/project/fixtures/osm-parkland.json"), "utf8"));
 const BNG = resolve("packages/geo-core/test/fixtures/bng3/bng3.shp");
-const AREA = { placeName: "Campus", bboxWgs84: CAMPUS };
+const AREA = { placeName: "Parkland", bboxWgs84: PARKLAND };
 
 const okOsm = async () => parseOverpass(OSM);
 const busyOsm = (bbox: Bbox) => fetchOsm(bbox, async () => new Response("", { status: 429 }));
@@ -36,7 +36,7 @@ describe("ProjectSession", () => {
 
   it("creates a metric project and refuses an area that is too wide", () => {
     const s = new ProjectSession();
-    const { project, warning } = s.create("Campus maps", AREA, "Light");
+    const { project, warning } = s.create("Parkland maps", AREA, "Light");
     expect(project.area.projectionId).toBe("bng");
     expect(project.style.presetName).toBe("Light");
     expect(warning).toBeNull();
@@ -57,7 +57,7 @@ describe("ProjectSession", () => {
   it("refresh replaces OpenStreetMap layers only, and a busy server changes nothing", async () => {
     let fetcher: (b: Bbox) => Promise<any> = okOsm;
     const s = new ProjectSession({ fetchOsm: (b) => fetcher(b) });
-    s.create("Campus", AREA, "Light");
+    s.create("Parkland", AREA, "Light");
     await s.importFile(BNG, "buildings");
     const r = await s.refresh();
     expect(r.counts.buildings).toBe(3); // from the file, not OpenStreetMap
@@ -80,7 +80,7 @@ describe("ProjectSession", () => {
 
   it("switching a layer back to OpenStreetMap drops the file data until the next refresh", async () => {
     const s = new ProjectSession({ fetchOsm: okOsm });
-    s.create("Campus", AREA, "Light");
+    s.create("Parkland", AREA, "Light");
     await s.importFile(BNG, "buildings");
     expect(s.project!.sources.buildings).toMatchObject({ kind: "file", datasetName: "Bng3" });
     s.setSource("buildings", { kind: "osm" });
@@ -94,11 +94,11 @@ describe("ProjectSession", () => {
 
   it("saves and opens an equal project; the first save needs a path", async () => {
     const s = new ProjectSession({ fetchOsm: okOsm });
-    s.create("Campus", AREA, "Light");
+    s.create("Parkland", AREA, "Light");
     await s.refresh();
     s.addMap({ name: "Entrance", centre: CENTRE });
     await expect(s.save()).rejects.toThrow("Choose where to save the project first.");
-    const path = join(dir, "campus.afgeo");
+    const path = join(dir, "parkland.afgeo");
     await s.save(path);
     expect(s.dirty).toBe(false);
     expect(s.path).toBe(path);
@@ -119,7 +119,7 @@ describe("ProjectSession", () => {
 
   it("lists features with a search, offset and limit", async () => {
     const s = new ProjectSession({ fetchOsm: okOsm });
-    s.create("Campus", AREA, "Light");
+    s.create("Parkland", AREA, "Light");
     await s.importFile(BNG, "buildings");
     const all = s.features("buildings", "", 0, 100);
     expect(all.total).toBe(3);
@@ -134,7 +134,7 @@ describe("ProjectSession", () => {
 
   it("adds, edits and deletes maps with defaults and checks", () => {
     const s = new ProjectSession();
-    s.create("Campus", AREA, "Light");
+    s.create("Parkland", AREA, "Light");
     const m = s.addMap({ name: "Entrance", centre: CENTRE });
     expect(m).toMatchObject({
       name: "Entrance", centre: CENTRE, scale: 2500, rotationDeg: 0, sizeMm: { width: 420, height: 297 },
@@ -151,7 +151,7 @@ describe("ProjectSession", () => {
 
   it("merges style changes and checks them", () => {
     const s = new ProjectSession();
-    s.create("Campus", AREA, "Light");
+    s.create("Parkland", AREA, "Light");
     const st = s.updateStyle({ roles: { paths: { stroke: "#123456" } }, marker: { label: "Vous êtes ici" } });
     expect(st.roles.paths.stroke).toBe("#123456");
     expect(st.roles.paths.strokePt).toBe(0.75);
@@ -164,7 +164,7 @@ describe("ProjectSession", () => {
 
   it("sets the map background (paper) colour, checked like the others; a preset brings its own", () => {
     const s = new ProjectSession();
-    s.create("Campus", AREA, "Light");
+    s.create("Parkland", AREA, "Light");
     expect(s.project!.style.paper).toBe("#f4f1ea");
     expect(s.updateStyle({ paper: "#ABCDEF" }).paper).toBe("#abcdef");
     expect(err(() => s.updateStyle({ paper: "white" } as any)).message).toBe("The background must be a colour like #1a2b3c.");
@@ -175,15 +175,15 @@ describe("ProjectSession", () => {
 
   it("works out each map's status against the open documents", async () => {
     const s = new ProjectSession({ fetchOsm: okOsm });
-    const { project } = s.create("Campus", AREA, "Light");
+    const { project } = s.create("Parkland", AREA, "Light");
     await s.refresh();
     const a = s.addMap({ name: "A", centre: CENTRE });
     const b = s.addMap({ name: "B", centre: CENTRE });
-    const docs = (artboards: any[]) => ({ documents: [{ docId: "d1", title: "Campus.af", artboards }] });
+    const docs = (artboards: any[]) => ({ documents: [{ docId: "d1", title: "Parkland.af", artboards }] });
     expect(s.statuses(docs([])).map((x) => x.status)).toEqual(["Not sent", "Not sent"]);
 
-    s.patchMap(a.id, { target: { docId: "d1", docTitle: "Campus.af" } });
-    s.recordSent(project.id, a.id, s.statusHash(a.id), { objectIds: ["paths:1"], docId: "d1", docTitle: "Campus.af" });
+    s.patchMap(a.id, { target: { docId: "d1", docTitle: "Parkland.af" } });
+    s.recordSent(project.id, a.id, s.statusHash(a.id), { objectIds: ["paths:1"], docId: "d1", docTitle: "Parkland.af" });
     expect(s.statuses(docs([]))[0]).toEqual({ mapId: a.id, status: "Up to date" });
     s.updateStyle({ roles: { paths: { stroke: "#000000" } } });
     expect(s.statuses(docs([]))[0]!.status).toBe("Changed since sent");
@@ -193,7 +193,7 @@ describe("ProjectSession", () => {
     expect(s.statuses({ documents: [copy] })[0]!.status).toBe("Target not open");
     expect(s.artboardFor({ documents: [copy] }, a.id)).toBeNull();
     // Both open: only the target's own artboard (none yet) counts, never the copy's.
-    const both = { documents: [copy, { docId: "d1", title: "Campus.af", artboards: [] }] };
+    const both = { documents: [copy, { docId: "d1", title: "Parkland.af", artboards: [] }] };
     expect(s.statuses(both)[0]!.status).toBe("Changed since sent");
     expect(s.artboardFor(both, a.id)).toBeNull();
     // A target without an id still finds the map by its artboard tag in any open document.
@@ -205,28 +205,28 @@ describe("ProjectSession", () => {
     expect(s.statuses({ documents: [] })[0]!.status).toBe("Target not open");
     expect(s.statuses({ documents: [] })[1]!.status).toBe("Not sent"); // no target chosen yet
     // The document id survives save and reopen: a different document with the same title is not the target.
-    expect(s.statuses({ documents: [{ docId: "x", title: "Campus.af", artboards: [] }] })[0]!.status).toBe("Target not open");
+    expect(s.statuses({ documents: [{ docId: "x", title: "Parkland.af", artboards: [] }] })[0]!.status).toBe("Target not open");
     expect(b.sent).toBeNull();
   });
 
   it("a target without a document id is still found by its title", () => {
     const s = new ProjectSession({ fetchOsm: okOsm });
-    s.create("Campus", AREA, "Light");
+    s.create("Parkland", AREA, "Light");
     const a = s.addMap({ name: "A", centre: CENTRE });
-    s.patchMap(a.id, { target: { docId: "", docTitle: "Campus.af" } });
-    expect(s.statusOf({ documents: [{ docId: "x", title: "Campus.af", artboards: [] }] }, a.id)).toBe("Not sent");
+    s.patchMap(a.id, { target: { docId: "", docTitle: "Parkland.af" } });
+    expect(s.statusOf({ documents: [{ docId: "x", title: "Parkland.af", artboards: [] }] }, a.id)).toBe("Not sent");
   });
 
   it("recordSent never moves a map to a different document than its target", () => {
     const s = new ProjectSession({ fetchOsm: okOsm });
-    const { project } = s.create("Campus", AREA, "Light");
+    const { project } = s.create("Parkland", AREA, "Light");
     const a = s.addMap({ name: "A", centre: CENTRE });
     s.patchMap(a.id, { target: { docId: "A", docTitle: "Untitled" } });
     s.recordSent(project.id, a.id, s.statusHash(a.id), { objectIds: [], docId: "B", docTitle: "Untitled" });
     expect(s.map(a.id).target).toEqual({ docId: "A", docTitle: "Untitled" });
     // The same document under a new title (saved under a name): the title follows.
-    s.recordSent(project.id, a.id, s.statusHash(a.id), { objectIds: [], docId: "A", docTitle: "Campus.af" });
-    expect(s.map(a.id).target).toEqual({ docId: "A", docTitle: "Campus.af" });
+    s.recordSent(project.id, a.id, s.statusHash(a.id), { objectIds: [], docId: "A", docTitle: "Parkland.af" });
+    expect(s.map(a.id).target).toEqual({ docId: "A", docTitle: "Parkland.af" });
     // No target yet: the document drawn into becomes it.
     const b = s.addMap({ name: "B", centre: CENTRE });
     s.recordSent(project.id, b.id, s.statusHash(b.id), { objectIds: [], docId: "B", docTitle: "Untitled" });
@@ -235,7 +235,7 @@ describe("ProjectSession", () => {
 
   it("a change made while the project is being saved keeps it unsaved", async () => {
     const s = new ProjectSession({ fetchOsm: okOsm });
-    s.create("Campus", AREA, "Light");
+    s.create("Parkland", AREA, "Light");
     const a = s.addMap({ name: "A", centre: CENTRE });
     const path = join(dir, "race.afgeo");
     const saving = s.save(path);
@@ -249,7 +249,7 @@ describe("ProjectSession", () => {
 
   it("overlapping saves run one after the other: the newer state lands last, no temp file left", async () => {
     const s = new ProjectSession({ fetchOsm: okOsm });
-    s.create("Campus", AREA, "Light");
+    s.create("Parkland", AREA, "Light");
     const a = s.addMap({ name: "A", centre: CENTRE });
     const path = join(dir, "both.afgeo");
     const first = s.save(path);
@@ -266,7 +266,7 @@ describe("ProjectSession", () => {
     const calls: Array<{ scale: number; done: () => void }> = [];
     const save = (_path: string, project: any) => new Promise<void>((done) => { calls.push({ scale: project.maps[0].scale, done }); });
     const s = new ProjectSession({ fetchOsm: okOsm, saveProject: save as any });
-    s.create("Campus", AREA, "Light");
+    s.create("Parkland", AREA, "Light");
     const a = s.addMap({ name: "A", centre: CENTRE });
     const first = s.save(join(dir, "x.afgeo"));
     s.patchMap(a.id, { scale: 1250 });
@@ -286,7 +286,7 @@ describe("ProjectSession", () => {
 
   it("a failed save leaves no temp file behind", async () => {
     const s = new ProjectSession({ fetchOsm: okOsm });
-    s.create("Campus", AREA, "Light");
+    s.create("Parkland", AREA, "Light");
     const folder = join(dir, "taken");
     mkdirSync(folder); // a folder where the file should go: the final rename fails
     await expect(s.save(folder)).rejects.toThrow("The project couldn't be saved");
@@ -300,7 +300,7 @@ describe("ProjectSession", () => {
   it("a refresh that brings back the same data doesn't mark maps changed", async () => {
     let fetcher: (b: Bbox) => Promise<any> = okOsm;
     const s = new ProjectSession({ fetchOsm: (b) => fetcher(b) });
-    const { project } = s.create("Campus", AREA, "Light");
+    const { project } = s.create("Parkland", AREA, "Light");
     await s.refresh();
     const a = s.addMap({ name: "A", centre: CENTRE });
     s.recordSent(project.id, a.id, s.statusHash(a.id), { objectIds: [] });
@@ -322,7 +322,7 @@ describe("ProjectSession", () => {
       fetchOsm: (b) => fetcher(b),
       buildAreaPreview: (...args) => { builds += 1; return buildAreaPreview(...args); },
     });
-    s.create("Campus", AREA, "Light");
+    s.create("Parkland", AREA, "Light");
     expect(err(() => s.areaPreview()).status).toBe(409);
     expect(err(() => s.areaPreview()).message).toBe("Fetch the data first.");
     await s.refresh();

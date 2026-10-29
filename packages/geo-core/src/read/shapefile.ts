@@ -61,7 +61,7 @@ export async function readShapefile(path: string): Promise<Dataset[]> {
       raw.push(r.value);
     }
   } catch (e) {
-    throw new Error(`Couldn't read ${file}: ${(e as Error).message}`);
+    throw new Error(`Couldn't read ${file}: ${(e as Error).message}`, { cause: e });
   }
 
   if (prjText) return buildDatasets(raw, { path, format: "shapefile", crs: crsOf() });

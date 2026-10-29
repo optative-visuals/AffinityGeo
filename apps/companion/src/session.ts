@@ -283,7 +283,7 @@ export class ProjectSession {
   }
 
   counts(): Record<RoleId, number> {
-    this.current;
+    void this.current; // throws if no project is open
     const out = {} as Record<RoleId, number>;
     for (const r of ROLE_IDS) out[r] = this.data[r]?.features.length ?? 0;
     return out;
@@ -336,7 +336,7 @@ export class ProjectSession {
   }
 
   setSource(roleIn: string, source: RoleSource): Record<RoleId, number> {
-    this.current;
+    void this.current; // throws if no project is open
     const role = checkRole(roleIn);
     if (!source || source.kind !== "osm") throw bad('To use a file, import it. Only { "kind": "osm" } can be set here.');
     this.applySource(role, source);
@@ -354,7 +354,7 @@ export class ProjectSession {
   }
 
   features(roleIn: string, q: string, offset: number, limit: number, sort?: string, dir: string = "asc"): { total: number; rows: Array<{ fid: string; name: string; attrs: Dataset["features"][number]["attrs"] }> } {
-    this.current;
+    void this.current; // throws if no project is open
     const role = checkRole(roleIn);
     const needle = q.trim().toLowerCase();
     const all = this.data[role]?.features ?? [];
@@ -381,7 +381,7 @@ export class ProjectSession {
 
   /** fids in a layer matching a filter; throws FilterError (with its position) for a bad filter. */
   matching(roleIn: string, filter: string): { role: RoleId; fids: string[] } {
-    this.current;
+    void this.current; // throws if no project is open
     const role = checkRole(roleIn);
     if (typeof filter !== "string") throw bad('Please provide "filter".');
     const predicate = parseFilter(filter);

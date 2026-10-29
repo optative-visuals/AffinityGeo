@@ -1,4 +1,4 @@
-// The app: the shell, polling, the project buttons and the close guard. Screens plug in here (later tasks).
+// The app: the shell, polling, the project buttons and the close guard. Each screen plugs in here.
 import { useEffect } from "react";
 import { api, pendingRequests } from "./api.js";
 import { platform } from "./platform.js";

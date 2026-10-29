@@ -142,7 +142,7 @@ function normaliseJob(job, plan) {
 /**
  * Frame-local mm ↔ spread px. R = the frame rect the map was laid out for (spread px,
  * R.width = map width in mm × ppm); B = where the "Frame" outline is now (moved or scaled
- * by the designer). Drawing goes mm → R px → B px with the 1a plan.mapToFrameBox;
+ * by the designer). Drawing goes mm → R px → B px with plan.mapToFrameBox;
  * reading back is the exact inverse with the same scale rule (plan.frameBoxScale).
  */
 function frameMapping(R, B, ppm, plan) {
@@ -468,7 +468,7 @@ function readCurves(node) {
 function readProps(node, kind, mapping, dpi, geomSignature) {
   const st = readStroke(node, dpi);
   const c = readCurves(node);
-  let visible = true;
+  let visible;
   try { visible = node.isVisible !== false; } catch (e) { visible = true; }
   return {
     fill: readFill(node),
@@ -518,7 +518,7 @@ function listTargets(documents) {
     const ppm = doc.dpi / 25.4;
     const artboards = [];
     for (const ab of artboardsOf(doc)) {
-      let node = null;
+      let node;
       try { node = ab.node; } catch (e) { node = null; }
       const b = ab.spreadBaseBox;
       const name = artboardName(ab, node);
@@ -534,7 +534,7 @@ function findMapArtboards(documents, projectId, mapId) {
   const found = [];
   for (const doc of documents || []) {
     for (const ab of artboardsOf(doc)) {
-      let node = null;
+      let node;
       try { node = ab.node; } catch (e) { continue; }
       if (sameMap(tagOf(node, 'geo:map'), projectId, mapId)) found.push({ doc: doc, ab: ab, node: node });
     }
@@ -751,7 +751,7 @@ function sendMap(documents, payload, deps) {
       warnings.push(OUTLINE_BACK);
     }
   }
-  let B = R;
+  let B;
   try { B = boxOf(outline.spreadBaseBox); } catch (e) { B = R; }
   for (const w of plan.frameBoxWarnings(R, B, rotationOf(outline))) warnings.push(w);
   const readMapping = frameMapping(R, B, ppm, plan); // how the objects already there were laid out
@@ -1038,7 +1038,7 @@ function sendMap(documents, payload, deps) {
   for (const id of p.deletedIds || []) ids.add(id);
   if ((label && labelAction !== 'remove') || labelDeleted) ids.add('marker:label');
   const keptEdited = p.keptEdited.map(function (k) {
-    let name = '';
+    let name;
     try { name = String(k.nodeId.userDescription || ''); } catch (e) { name = ''; }
     const id = tagOf(k.nodeId, 'geo:fid');
     const parts = splitId(id) || { role: '', fid: k.fid };
@@ -1100,7 +1100,7 @@ function linkArtboard(documents, payload) {
   if (!doc) throw new Error('Open the document in Affinity, then pick the artboard again.');
   const abs = artboardsOf(doc);
   const ab = abs[payload.artboardIndex];
-  let node = null;
+  let node;
   try { node = ab ? ab.node : null; } catch (e) { node = null; }
   if (!ab || !node || artboardName(ab, node) !== String(payload.artboardName)) throw new Error(ARTBOARDS_CHANGED);
 
@@ -1114,7 +1114,7 @@ function linkArtboard(documents, payload) {
   const cmds = [];
   for (const other of abs) {
     if (other === ab) continue;
-    let n = null;
+    let n;
     try { n = other.node; } catch (e) { continue; }
     if (n && n !== node && sameMap(tagOf(n, 'geo:map'), payload.projectId, payload.mapId)) cmds.push(setTag(doc, n, 'geo:map', ''));
   }
@@ -1125,7 +1125,7 @@ function linkArtboard(documents, payload) {
     let inside = false;
     for (let p = g.parent; p; p = p.parent) if (p === node) { inside = true; break; }
     if (inside) continue;
-    let name = '';
+    let name;
     try { name = String(g.userDescription || ''); } catch (e) { name = ''; }
     cmds.push(setTag(doc, g, 'geo:mapframe', ''));
     cmds.push(s.C.DocumentCommand.createSetDescription(sel(doc, g), name + ' (unlinked)'));

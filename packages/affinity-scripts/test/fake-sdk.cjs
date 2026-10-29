@@ -86,7 +86,7 @@ function fillDesc(hex) {
   return { fill, hex };
 }
 
-class Node {
+class FakeNode {
   constructor(kind, name) {
     this.id = nextId++; this.kind = kind; this.userDescription = name || ''; this.tags = new Map(); this.kids = []; this.parent = null;
     this.pc = null; this._text = undefined; this.textPx = null; this.font = null; this.charFills = null; this.unreadable = new Set(); this.fillHex = null; this.penHex = null; this.weight = 0; this.visible = true; this.box = null;
@@ -102,6 +102,7 @@ class Node {
   // unreadable: names of reads that throw ("fill", "height", "font", "box", "text"), to test guards.
   get story() {
     if (this.kind !== 'text') return undefined;
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- the getters below need the node, not their own `this`
     const node = this;
     const guard = (what, v) => { if (node.unreadable.has(what)) throw new Error('Fake: unreadable ' + what); return v; };
     return {
@@ -150,7 +151,7 @@ function makeDoc(opts = {}) {
   });
   const spread = { get artboards() { return spreadKids.filter((n) => n.kind === 'artboard').map(artboardIface); } };
   function addArtboard(rect) {
-    const n = new Node('artboard', 'Artboard');
+    const n = new FakeNode('artboard', 'Artboard');
     n.box = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
     spreadKids.push(n);
     return n;
@@ -180,7 +181,7 @@ function fakeSdk() {
               // A child added into a transformed parent keeps its spread position.
               const inv = target.baseToSpreadTransform.inverted;
               for (const d of defs) {
-                const n = new Node(d.kind, d.name);
+                const n = new FakeNode(d.kind, d.name);
                 Object.assign(n, d.init || {});
                 n.xf = inv;
                 n.parent = target;
@@ -264,4 +265,4 @@ function fakeSdk() {
   };
 }
 
-module.exports = { fakeSdk, makeDoc, Node, Transform };
+module.exports = { fakeSdk, makeDoc, Node: FakeNode, Transform };

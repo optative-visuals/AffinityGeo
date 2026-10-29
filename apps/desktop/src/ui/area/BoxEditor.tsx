@@ -112,6 +112,8 @@ export function BoxEditor({ place, bbox, onChange }: BoxEditorProps) {
   const view = fit.view;
   const side = (HANDLE_PX * 2 * view.half) / fitted;
   const needsRefit = fit.place !== place || (!dragging && !fitsIn(view, corners, side));
+  // Runs after every render on purpose: it only acts when the box has left the view, and guards against looping.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!needsRefit) return;
     const next = fitSquare([...placePts, ...corners]);

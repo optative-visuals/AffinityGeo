@@ -8,7 +8,7 @@ import {
 } from "@affinitygeo/geo-core";
 import type { AffinityOp } from "./queue.js";
 import { HomeError, loaderText, resolveHome } from "./home.js";
-import { ApiError, ProjectSession, type Targets } from "./session.js";
+import { ApiError, ProjectSession, type NewMapInput, type Targets } from "./session.js";
 
 export const MAX_BODY = 50 * 1024 * 1024;
 
@@ -31,7 +31,11 @@ export interface ApiDeps {
   scripts?: () => { loaderPath?: string; note: string | null };
 }
 
-export async function readJson(req: IncomingMessage): Promise<Record<string, any>> {
+/** A parsed request body. Its shape is unchecked, so each route validates what it reads. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped JSON from the network
+export type JsonBody = Record<string, any>;
+
+export async function readJson(req: IncomingMessage): Promise<JsonBody> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
@@ -52,7 +56,7 @@ export async function readJson(req: IncomingMessage): Promise<Record<string, any
   }
 }
 
-function requireString(body: Record<string, any>, key: string): string {
+function requireString(body: JsonBody, key: string): string {
   const v = body[key];
   if (typeof v !== "string" || v.trim() === "") throw new ApiError(400, `Please provide "${key}".`);
   return v;
@@ -100,7 +104,7 @@ export function createApi(deps: ApiDeps) {
     return { documents: Array.isArray(r?.documents) ? r!.documents : [] };
   }
 
-  async function sendMaps(body: Record<string, any>): Promise<{ results: SendResult[] }> {
+  async function sendMaps(body: JsonBody): Promise<{ results: SendResult[] }> {
     const project = session.current;
     const reset = body.reset === true;
     let ids: string[] | null = null;
@@ -124,7 +128,7 @@ export function createApi(deps: ApiDeps) {
       if (!map) { results.push(failed(mapId, MAP_DELETED)); continue; }
       if (stopped) { results.push(failed(mapId, stopped)); continue; }
 
-      // Review Focus 3: never draw into whichever document happens to be open.
+      // Never draw into whichever document happens to be open.
       if (session.statusOf(targets, mapId) === "Target not open") {
         results.push(failed(mapId, `Open '${map.target!.docTitle}' in Affinity to update ${map.name}`));
         continue;
@@ -162,7 +166,7 @@ export function createApi(deps: ApiDeps) {
         results.push(failed(mapId, outcome?.error ?? "Affinity reported a problem."));
         continue;
       }
-      const r = (outcome.result ?? {}) as Record<string, unknown>;
+      const r = (outcome.result ?? {}) as JsonBody;
       session.recordSent(project.id, mapId, job.hash, r);
       results.push({
         mapId, ok: true, created: num(r.created), updated: num(r.updated), removed: num(r.removed),
@@ -258,7 +262,7 @@ export function createApi(deps: ApiDeps) {
     }
 
     if (area === "maps") {
-      if (n === 2 && method === "POST") return session.addMap(body as any);
+      if (n === 2 && method === "POST") return session.addMap(body as NewMapInput);
       if (n === 3 && a === "status" && method === "GET") {
         if (!session.current.maps.length) return [];
         return session.statuses(await listTargets());

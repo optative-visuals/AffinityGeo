@@ -19,14 +19,24 @@
     "build:app": "node apps/desktop/build.mjs",
     "app": "npm run build:app && electron apps/desktop/dist/main.cjs",
     "icons": "node tools/build-icons.mjs",
-    "dist": "npm run build:app && electron-builder --projectDir apps/desktop --publish never"
+    "dist": "npm run build:app && electron-builder --projectDir apps/desktop --publish never",
+    "lint": "eslint ."
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@types/node": "26.6.5",
     "esbuild": "0.28.2",
+    "eslint": "10.13.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.13.0",
     "pngjs": "7.0.0",
     "tsx": "4.23.15",
-    "typescript": "7.0.2",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
+    "typescript-7": "npm:typescript@7.0.2",
+    "typescript-eslint": "8.72.1",
     "vitest": "5.0.5"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

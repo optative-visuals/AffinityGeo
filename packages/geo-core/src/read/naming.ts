@@ -15,6 +15,7 @@ const NAME_LIKE = /(^|_)name$|nm$|nm\d{2}$|^name_/i;
 
 /** dBASE text fields are often NUL-padded (Natural Earth): drop NULs and surrounding whitespace. */
 export function cleanText(s: string): string {
+  // eslint-disable-next-line no-control-regex -- stripping NUL characters is the point
   return s.replace(/\u0000/g, "").trim();
 }
 

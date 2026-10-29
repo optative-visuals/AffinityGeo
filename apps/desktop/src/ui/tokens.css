@@ -196,7 +196,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); outline: 
 .toast-success { border-left-color: var(--green); }
 .toast-error { border-left-color: var(--red); }
 
-/* ---- placeholder screens (replaced by later tasks) ---- */
+/* ---- placeholder screens ---- */
 
 .empty {
   height: 100%; display: grid; place-items: center; text-align: center; color: var(--muted);

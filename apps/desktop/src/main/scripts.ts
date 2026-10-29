@@ -3,7 +3,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-/** Scripts earlier versions installed and nothing loads any more (draw.js: the 1a frame/layer drawer). */
+/** Scripts earlier versions installed and nothing loads any more (draw.js: the first frame and layer drawer). */
 export const OBSOLETE = ["draw.js"];
 
 export type ScriptsResult = { status: "installed" | "updated" | "current" | "failed"; reason?: string };

@@ -1,10 +1,10 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
-const require = createRequire(import.meta.url);
-const dm = require("../src/draw-map.js");
-const sendPlan = require("../src/send-plan.js");
-const plan = require("../src/plan.js");
+const requireCjs = createRequire(import.meta.url);
+const dm = requireCjs("../src/draw-map.js");
+const sendPlan = requireCjs("../src/send-plan.js");
+const plan = requireCjs("../src/plan.js");
 
 const DPI = 72;
 const PPM = DPI / 25.4;

@@ -45,6 +45,24 @@ jobs:
           if (-not (Test-Path 'apps/desktop/build/icon.ico')) {
             Write-Host '::warning::No app icon — run npm run icons and commit apps/desktop/build'
           }
+      - name: Create the draft release first
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The publish step uploads files in parallel and can create two drafts at once,
+          # splitting the assets between them. Creating the draft first avoids that.
+          $env:VERSION = $env:TAG -replace '^v', ''
+          gh release view "$env:TAG" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "A release for $env:TAG already exists, so it will be reused."
+          } else {
+            gh release create "$env:TAG" --draft --title "AffinityGeo $env:VERSION" --verify-tag --notes "See CHANGELOG.md."
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          exit 0
+
       - name: Build the installer and publish a draft release
         run: npx electron-builder --projectDir apps/desktop --publish always
         env:

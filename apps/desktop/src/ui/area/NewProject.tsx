@@ -146,7 +146,7 @@ export function NewProject({ onClose }: NewProjectProps) {
               <label className="field-label" htmlFor={`${titleId}-search`}>Search for a place</label>
               <input id={`${titleId}-search`} type="search" autoFocus value={query} onChange={(e) => setQuery(e.target.value)}
                 placeholder="For example: Hyde Park, London" />
-              <span className="help">Type a town, a campus or a street. The map is drawn from OpenStreetMap.</span>
+              <span className="help">Type a town, a park or a street. The map is drawn from OpenStreetMap.</span>
             </div>
             {searching && <p className="muted">Searching…</p>}
             {searchError && <p className="help help-bad" role="alert">{searchError}</p>}

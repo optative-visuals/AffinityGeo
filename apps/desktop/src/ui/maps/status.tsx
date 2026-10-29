@@ -26,7 +26,7 @@ export function artboardOf(doc: TargetDocument | undefined, projectId: string, m
   return doc.artboards.findIndex((a) => a.mapIds.some((m) => m.projectId === projectId && m.mapId === mapId));
 }
 
-/** "Campus maps · Lake", just the document title when no artboard is known, or "No document chosen". */
+/** "Parkland maps · Lake", just the document title when no artboard is known, or "No document chosen". */
 export function targetLine(map: Pick<MapSpec, "id" | "target">, targets: TargetDocument[], projectId: string): string {
   if (!map.target) return "No document chosen";
   const t = map.target;

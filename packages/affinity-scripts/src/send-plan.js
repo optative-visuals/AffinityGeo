@@ -5,7 +5,7 @@
 
 var PROPS = ["fill", "stroke", "widthPt", "visible", "geom"];
 
-// GEOMETRY SIGNATURE RULE (Task 7 must compute exactly this from what it reads back, in mm):
+// GEOMETRY SIGNATURE RULE (what draw-map.js must compute from what it reads back, in mm):
 //   points         -> "p:cx,cy"      the centre (bbox centre), rounded to 0.1 mm
 //   lines/polygons -> "n:x,y,w,h"    n = total node count, bbox rounded to 0.1 mm;
 //                                    a repeated closing point (last == first within

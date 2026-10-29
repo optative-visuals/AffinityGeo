@@ -24,9 +24,10 @@ export async function readGeoJson(path: string): Promise<Dataset[]> {
   } catch {
     throw new Error(`Couldn't open ${file}. Check that the file exists and isn't open in another program.`);
   }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- parsed JSON of unknown shape, checked below
   let json: any;
   try {
-    json = JSON.parse(text.replace(/^﻿/, ""));
+    json = JSON.parse(text.replace(/^\uFEFF/, ""));
   } catch {
     throw new Error(`${file} isn't valid GeoJSON (the file couldn't be parsed).`);
   }

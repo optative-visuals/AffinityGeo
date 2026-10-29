@@ -43,9 +43,8 @@ describe.skipIf(!existsSync(NE))("Natural Earth 50m countries in Equal Earth", (
     expect(ds!.report.skipped).toBe(0);
     expect(job.features).toHaveLength(NE_50M_FEATURES);
     expect(total).toBeLessThan(5000);
-    // Plan target was < 40 %. Measured on NE 5.1.1 is 40.6 % (99613 -> 40435): ring floors in simplify.ts
-    // keep tiny islands whole rather than collapsing them, and NE 50m has many. Ruled acceptable by the controller; the 40 % was
-    // the plan's own number. Bound set just above the measurement.
+    // Measured on NE 5.1.1: 40.6 % of the nodes remain (99613 -> 40435). Ring floors in simplify.ts keep tiny
+    // islands whole rather than collapsing them, and NE 50m has many. The bound is set just above the measurement.
     expect(nodesAfter).toBeLessThan(0.42 * nodesBefore);
     for (const f of ds!.features) {
       expect(f.name.length).toBeGreaterThan(0);
@@ -55,6 +54,7 @@ describe.skipIf(!existsSync(NE))("Natural Earth 50m countries in Equal Earth", (
 
   it("has clean text: no NUL padding or other control characters in names and string attributes", async () => {
     const [ds] = await readDataset(NE);
+    // eslint-disable-next-line no-control-regex -- the test is looking for control characters
     const control = /[\u0000-\u001f]/;
     for (const f of ds!.features) {
       expect(f.name).not.toMatch(control);

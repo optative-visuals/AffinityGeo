@@ -165,7 +165,7 @@ describe("final review: the guard decides on fresh facts", () => {
     resetApp({ project, dirty: false });
     vi.spyOn(api, "open").mockResolvedValue(project);
     const targets = vi.spyOn(api, "targets").mockResolvedValue({ documents: [] } as never);
-    await act(async () => { await projectActions.openRecent("C:/maps/Campus.afgeo"); });
+    await act(async () => { await projectActions.openRecent("C:/maps/Parkland.afgeo"); });
     expect(targets).toHaveBeenCalled();
   });
 });
@@ -225,7 +225,7 @@ describe("the window close guard", () => {
 
 describe("the top bar's project buttons", () => {
   it("Open…'s arrow lists the recent projects, and Save As… is there", async () => {
-    vi.spyOn(platform, "recent").mockResolvedValue(["C:/maps/Campus.afgeo", "D:\\work\\Town centre.afgeo"]);
+    vi.spyOn(platform, "recent").mockResolvedValue(["C:/maps/Parkland.afgeo", "D:\\work\\Town centre.afgeo"]);
     const onOpenRecent = vi.fn();
     const onSaveAs = vi.fn();
     render(<TopBar onNew={() => {}} onOpen={() => {}} onSave={() => {}} onSaveAs={onSaveAs} onOpenRecent={onOpenRecent} />);
@@ -237,7 +237,7 @@ describe("the top bar's project buttons", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open Recent" })); });
     const menu = screen.getByRole("menu", { name: "Open Recent" });
     const items = within(menu).getAllByRole("menuitem");
-    expect(items.map((i) => i.textContent)).toEqual(["Campus.afgeo", "Town centre.afgeo"]);
+    expect(items.map((i) => i.textContent)).toEqual(["Parkland.afgeo", "Town centre.afgeo"]);
     expect(items[1]!.getAttribute("title")).toBe("D:\\work\\Town centre.afgeo");
     fireEvent.click(items[1]!);
     expect(onOpenRecent).toHaveBeenCalledWith("D:\\work\\Town centre.afgeo");

@@ -201,7 +201,7 @@ async function start(): Promise<void> {
 
 /**
  * Background updates from GitHub releases (app-update.yml, generated from electron-builder.yml's publish).
- * Not in development, unless GEO_UPDATE_FEED names a generic feed (the acceptance test). A failed check, such as
+ * Not in development, unless GEO_UPDATE_FEED names a generic feed (used to test the updater). A failed check, such as
  * the 404 while the repository is private, is only logged.
  */
 function runUpdater(): void {

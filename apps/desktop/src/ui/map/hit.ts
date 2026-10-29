@@ -60,7 +60,7 @@ export function hitRotateHandle(
 
 /**
  * The compass bearing (degrees, 0–360, clockwise from north) from `centre` towards `point`, both in world metres.
- * That's the 1b-A ruling for rotationDeg: the bearing that points up on the map (0 = north up, 90 = east up).
+ * This is the meaning of rotationDeg: the bearing that points up on the map (0 = north up, 90 = east up).
  */
 export function bearingFrom(centre: readonly [number, number], point: readonly [number, number]): number {
   const deg = (Math.atan2(point[0] - centre[0], point[1] - centre[1]) * 180) / Math.PI;

@@ -39,7 +39,7 @@ export function parse(text: string, delimiter: Delimiter = ","): { header: strin
 }
 
 function sniffDelimiter(text: string): Delimiter {
-  const first = text.replace(/^﻿/, "").split(/\r?\n/, 1)[0] ?? "";
+  const first = text.replace(/^\uFEFF/, "").split(/\r?\n/, 1)[0] ?? "";
   let best: Delimiter = ",";
   let bestCount = -1;
   for (const d of [",", ";", "\t"] as Delimiter[]) {

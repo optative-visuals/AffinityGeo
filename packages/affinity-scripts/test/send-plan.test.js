@@ -1,8 +1,8 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
-const require = createRequire(import.meta.url);
-const { planSend, geomSignature, geomSame, propsFromStyle } = require("../src/send-plan.js");
+const requireCjs = createRequire(import.meta.url);
+const { planSend, geomSignature, geomSame, propsFromStyle } = requireCjs("../src/send-plan.js");
 
 const feat = (fid, x = 0) => ({ fid, name: `F ${fid}`, paths: [[x, 0, x + 10, 10]], closed: false });
 const layer = (role, features, fill = "#00FF00") => ({
@@ -53,7 +53,7 @@ describe("planSend", () => {
   const old = (f) => propsOf(f, "#00ff00");
   const edited = (f) => Object.assign(propsOf(f, "#00ff00"), { fill: "#ff0000" });
 
-  it("keeps a hand-edited fill and changes the others (Review Focus 1)", () => {
+  it("keeps a hand-edited fill and changes the others", () => {
     const existing = [node("paths", A, edited(A), old(A)), node("paths", B, old(B), old(B))];
     const plan = planSend(existing, mk([A, B], "#0000FF"), opts());
     const ua = plan.update.find((u) => u.nodeId === "n-A");
@@ -70,7 +70,7 @@ describe("planSend", () => {
     expect(plan.update[0].sent.fill).toBe("#0000ff");
   });
 
-  it("removes unedited objects that left the map and keeps edited ones (Review Focus 2)", () => {
+  it("removes unedited objects that left the map and keeps edited ones", () => {
     const existing = [node("paths", A, old(A), old(A)), node("paths", B, edited(B), old(B))];
     const plan = planSend(existing, mk([]), opts());
     expect(plan.remove).toEqual(["n-A"]);

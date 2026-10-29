@@ -50,8 +50,11 @@ export function MapCanvas(props: MapCanvasProps) {
   const app = useApp();
   const area = props.area ?? app.project?.area ?? null;
   const areaKey = area ? JSON.stringify([area.projectionId, area.projectionParams ?? null, area.bboxWgs84]) : "";
+  // Keyed on areaKey, not on the area object, which gets a new identity whenever the project object is rebuilt.
+  /* eslint-disable react-hooks/exhaustive-deps */
   const proj = useMemo(() => { try { return area ? projector(area) : null; } catch { return null; } }, [areaKey]);
   const cornerCache = useMemo(() => new WeakMap<MapSpec, Corners>(), [areaKey]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -191,6 +194,8 @@ export function MapCanvas(props: MapCanvasProps) {
       if (frame.current && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame.current);
       frame.current = 0;
     };
+    // Set up once: the handlers read the latest state through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function local(e: { clientX: number; clientY: number }): XY {

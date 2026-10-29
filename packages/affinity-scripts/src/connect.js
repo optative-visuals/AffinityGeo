@@ -183,7 +183,7 @@ function start(opts) {
   const get = makeGet(HttpRequest, RequestMethod, server, readVersion(home));
 
   // First ping, synchronously, before any timer: the only place UI is allowed (one alert at most).
-  let first = null;
+  let first;
   try {
     first = get('/affinity/next', 2, null);
   } catch (e) {

@@ -1,8 +1,8 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
-const require = createRequire(import.meta.url);
-const { pickCreatedNodes, mapToFrameBox, frameBoxWarnings, drawablePaths } = require("../src/plan.js");
+const requireCjs = createRequire(import.meta.url);
+const { pickCreatedNodes, mapToFrameBox, frameBoxWarnings, drawablePaths } = requireCjs("../src/plan.js");
 
 describe("pickCreatedNodes", () => {
   const n = (name) => ({ userDescription: name });

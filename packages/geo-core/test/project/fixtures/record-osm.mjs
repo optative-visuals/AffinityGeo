@@ -11,5 +11,5 @@ const res = await fetch("https://overpass-api.de/api/interpreter", {
 });
 if (!res.ok) throw new Error("Overpass answered " + res.status);
 const text = await res.text();
-writeFileSync(new URL("./osm-campus.json", import.meta.url), text);
+writeFileSync(new URL("./osm-parkland.json", import.meta.url), text);
 console.log("saved", text.length, "bytes");

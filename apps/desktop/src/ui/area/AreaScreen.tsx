@@ -87,7 +87,7 @@ function Sources() {
     }
   }
 
-  async function useOsm(role: RoleId): Promise<void> {
+  async function switchToOsm(role: RoleId): Promise<void> {
     try {
       await api.setSource(role, { kind: "osm" });
       await getActions().refreshProject();
@@ -108,7 +108,7 @@ function Sources() {
               <span className="source-name">{src?.kind === "file" ? fileName(src.path) : "OpenStreetMap"}</span>
               {counts && <span className="muted source-count">{fmtCount(counts[role] ?? 0)}</span>}
               <button type="button" className="btn btn-small" onClick={() => { void chooseFile(role); }}>Use a file…</button>
-              {isFile && <button type="button" className="btn btn-small" onClick={() => { void useOsm(role); }}>Use OpenStreetMap</button>}
+              {isFile && <button type="button" className="btn btn-small" onClick={() => { void switchToOsm(role); }}>Use OpenStreetMap</button>}
             </li>
           );
         })}

@@ -6,12 +6,12 @@ import { join, resolve } from "node:path";
 import { buildMapJob, fetchOsm, parseOverpass, PRESETS, ROLE_IDS, WGS84, type Bbox, type Dataset } from "@affinitygeo/geo-core";
 import { startServer } from "../src/server.js";
 
-const CAMPUS: Bbox = [-0.1690, 51.5040, -0.1640, 51.5065];
+const PARKLAND: Bbox = [-0.1690, 51.5040, -0.1640, 51.5065];
 const CENTRE: [number, number] = [-0.1665, 51.505];
-const OSM = JSON.parse(readFileSync(resolve("packages/geo-core/test/project/fixtures/osm-campus.json"), "utf8"));
+const OSM = JSON.parse(readFileSync(resolve("packages/geo-core/test/project/fixtures/osm-parkland.json"), "utf8"));
 const BNG = resolve("packages/geo-core/test/fixtures/bng3/bng3.shp");
 const BUSY = "OpenStreetMap is busy right now. Try again in a minute — your current data is unchanged.";
-const TARGET = { docId: "doc-1", docTitle: "Campus.af" };
+const TARGET = { docId: "doc-1", docTitle: "Parkland.af" };
 
 let dir: string;
 let srv: Awaited<ReturnType<typeof startServer>>;
@@ -95,8 +95,8 @@ async function statuses(): Promise<string[]> {
   return r.body.map((x: any) => x.status);
 }
 
-async function campusWithTwoMaps() {
-  const p = await post("/api/project/new", { name: "Campus maps", area: { placeName: "Campus", bboxWgs84: CAMPUS }, preset: "Light" });
+async function parklandWithTwoMaps() {
+  const p = await post("/api/project/new", { name: "Parkland maps", area: { placeName: "Parkland", bboxWgs84: PARKLAND }, preset: "Light" });
   expect(p.status).toBe(200);
   const r = await post("/api/data/refresh");
   expect(r.status).toBe(200);
@@ -115,7 +115,7 @@ beforeEach(async () => {
     fetchOsm: (bbox: Bbox) => osmMode === "ok"
       ? Promise.resolve(parseOverpass(OSM))
       : fetchOsm(bbox, async () => new Response("", { status: 429 })),
-    searchPlaces: async (q: string) => { places.push(q); return [{ name: "Hyde Park", bboxWgs84: CAMPUS, centre: CENTRE }]; },
+    searchPlaces: async (q: string) => { places.push(q); return [{ name: "Hyde Park", bboxWgs84: PARKLAND, centre: CENTRE }]; },
   });
   base = `http://127.0.0.1:${srv.port}`;
   docs = [{ docId: TARGET.docId, title: TARGET.docTitle, artboards: [] }];
@@ -142,7 +142,7 @@ describe("project API", () => {
 
   it("new project, refresh, two maps, send: both up to date; restyle: both changed", async () => {
     expect((await get("/api/project")).status).toBe(409);
-    const { project, a, b } = await campusWithTwoMaps();
+    const { project, a, b } = await parklandWithTwoMaps();
     expect(project.area.projectionId).toBe("bng");
     const info = (await get("/api/project")).body;
     expect(info.dirty).toBe(true);
@@ -189,8 +189,8 @@ describe("project API", () => {
     expect(r.status).not.toBe(431);
   });
 
-  it("Review Focus 3: a map whose document isn't open is skipped with a plain message", async () => {
-    const { a } = await campusWithTwoMaps();
+  it("a map whose document isn't open is skipped with a plain message", async () => {
+    const { a } = await parklandWithTwoMaps();
     docs = [{ docId: "other", title: "Poster.af", artboards: [] }];
     expect(await statuses()).toEqual(["Target not open", "Target not open"]);
     const before = ops.filter((o) => o.op === "sendMap").length;
@@ -198,14 +198,14 @@ describe("project API", () => {
     expect(s.status).toBe(200);
     expect(s.body.results).toEqual([{
       mapId: a.id, ok: false, created: 0, updated: 0, removed: 0, keptEdited: [], resized: false, warnings: [],
-      error: "Open 'Campus.af' in Affinity to update Entrance map",
+      error: "Open 'Parkland.af' in Affinity to update Entrance map",
     }]);
     expect(ops.filter((o) => o.op === "sendMap").length).toBe(before); // nothing went to Affinity
     expect((await get("/api/project")).body.project.maps[0].sent).toBeNull();
   });
 
   it("a different document with the target's title is not the target: skipped, target unchanged", async () => {
-    const { a } = await campusWithTwoMaps();
+    const { a } = await parklandWithTwoMaps();
     expect((await patch(`/api/maps/${a.id}`, { target: { docId: "A", docTitle: "Untitled" } })).status).toBe(200);
     docs = [{ docId: "B", title: "Untitled", artboards: [] }];
     expect((await statuses())[0]).toBe("Target not open");
@@ -217,12 +217,12 @@ describe("project API", () => {
   });
 
   it("a closed target is not open just because a Save-As copy with its artboard is: skipped, nothing recorded", async () => {
-    const { project, a } = await campusWithTwoMaps();
-    docs = [{ docId: "copy", title: "Campus copy.af", artboards: [{ name: "Entrance map", mapIds: [{ projectId: project.id, mapId: a.id }], widthMm: 420, heightMm: 297 }] }];
+    const { project, a } = await parklandWithTwoMaps();
+    docs = [{ docId: "copy", title: "Parkland copy.af", artboards: [{ name: "Entrance map", mapIds: [{ projectId: project.id, mapId: a.id }], widthMm: 420, heightMm: 297 }] }];
     expect((await statuses())[0]).toBe("Target not open");
     const before = ops.filter((o) => o.op === "sendMap").length;
     const s = await post("/api/send", { mapIds: [a.id] });
-    expect(s.body.results[0]).toMatchObject({ ok: false, error: "Open 'Campus.af' in Affinity to update Entrance map" });
+    expect(s.body.results[0]).toMatchObject({ ok: false, error: "Open 'Parkland.af' in Affinity to update Entrance map" });
     expect(ops.filter((o) => o.op === "sendMap").length).toBe(before);
     const m = (await get("/api/project")).body.project.maps[0];
     expect(m.sent).toBeNull();
@@ -230,7 +230,7 @@ describe("project API", () => {
   });
 
   it("an Affinity error on send is reported per map and records nothing", async () => {
-    await post("/api/project/new", { name: "C", area: { placeName: "Campus", bboxWgs84: CAMPUS }, preset: "Light" });
+    await post("/api/project/new", { name: "C", area: { placeName: "Parkland", bboxWgs84: PARKLAND }, preset: "Light" });
     const m = (await post("/api/maps", { name: "No target", centre: CENTRE })).body;
     const s = await post("/api/send");
     expect(s.body.results[0]).toMatchObject({ mapId: m.id, ok: false, error: "Choose a document for No target in AffinityGeo first." });
@@ -238,7 +238,7 @@ describe("project API", () => {
   });
 
   it("asks once when an existing artboard is a different size", async () => {
-    const { project, a } = await campusWithTwoMaps();
+    const { project, a } = await parklandWithTwoMaps();
     docs[0]!.artboards.push({ name: "Entrance", mapIds: [{ projectId: project.id, mapId: a.id }], widthMm: 297, heightMm: 210 });
     const s = await post("/api/send", { mapIds: [a.id] });
     expect(s.body.results).toEqual([{ mapId: a.id, ok: false, needsResizeChoice: true, artboardMm: { width: 297, height: 210 } }]);
@@ -250,7 +250,7 @@ describe("project API", () => {
   });
 
   it("a map deleted mid-send is reported, not dropped", async () => {
-    const { a, b } = await campusWithTwoMaps();
+    const { a, b } = await parklandWithTwoMaps();
     onSendMap = async () => { expect((await del(`/api/maps/${b.id}`)).status).toBe(200); };
     const s = await post("/api/send");
     expect(s.body.results).toEqual([
@@ -260,9 +260,9 @@ describe("project API", () => {
   });
 
   it("maps left when another project is opened mid-send are reported, not dropped", async () => {
-    const { a, b } = await campusWithTwoMaps();
+    const { a, b } = await parklandWithTwoMaps();
     onSendMap = async () => {
-      expect((await post("/api/project/new", { name: "Other", area: { placeName: "Campus", bboxWgs84: CAMPUS }, preset: "Light" })).status).toBe(200);
+      expect((await post("/api/project/new", { name: "Other", area: { placeName: "Parkland", bboxWgs84: PARKLAND }, preset: "Light" })).status).toBe(200);
     };
     const s = await post("/api/send");
     expect(s.body.results).toEqual([
@@ -272,8 +272,8 @@ describe("project API", () => {
     expect((await get("/api/project")).body.project.maps).toEqual([]); // the new project is untouched
   });
 
-  it("Review Focus 4: a busy server gives 503 and keeps the snapshot", async () => {
-    await campusWithTwoMaps();
+  it("a busy server gives 503 and keeps the snapshot", async () => {
+    await parklandWithTwoMaps();
     const before = (await get("/api/project")).body;
     osmMode = "busy";
     const r = await post("/api/data/refresh");
@@ -285,15 +285,15 @@ describe("project API", () => {
   });
 
   it("refresh reports the before and after counts", async () => {
-    await post("/api/project/new", { name: "C", area: { placeName: "Campus", bboxWgs84: CAMPUS }, preset: "Light" });
+    await post("/api/project/new", { name: "C", area: { placeName: "Parkland", bboxWgs84: PARKLAND }, preset: "Light" });
     const r = await post("/api/data/refresh");
     expect(r.body.changed.paths).toEqual({ before: 0, after: r.body.counts.paths });
   });
 
   it("saves, then opens an equal project", async () => {
-    await campusWithTwoMaps();
+    await parklandWithTwoMaps();
     await post("/api/send");
-    const path = join(dir, "campus.afgeo");
+    const path = join(dir, "parkland.afgeo");
     const noFile = await post("/api/project/save", {});
     expect(noFile.status).toBe(400);
     expect(noFile.body).toEqual({ error: "Choose where to save the project first.", code: "NEEDS_PATH" }); // the app's Save As cue
@@ -316,13 +316,13 @@ describe("project API", () => {
     const big = await post("/api/project/new", { name: "X", area: { placeName: "London", bboxWgs84: [-0.25, 51.45, -0.10, 51.55] }, preset: "Light" });
     expect(big.status).toBe(200);
     expect(big.body.warning).toBe("This is a large area. Fetching may take a while and maps may be slow to draw.");
-    const small = await post("/api/project/new", { name: "X", area: { placeName: "Campus", bboxWgs84: CAMPUS }, preset: "Light" });
+    const small = await post("/api/project/new", { name: "X", area: { placeName: "Parkland", bboxWgs84: PARKLAND }, preset: "Light" });
     expect(small.body.warning).toBeUndefined();
-    expect((await post("/api/project/new", { name: "X", area: { placeName: "Campus", bboxWgs84: [1, 2] }, preset: "Light" })).status).toBe(400);
+    expect((await post("/api/project/new", { name: "X", area: { placeName: "Parkland", bboxWgs84: [1, 2] }, preset: "Light" })).status).toBe(400);
   });
 
   it("data import, source switch, features and select", async () => {
-    const { a } = await campusWithTwoMaps();
+    const { a } = await parklandWithTwoMaps();
     const osmBuildings = (await get("/api/project")).body.counts.buildings;
     const imp = await post("/api/data/import", { path: BNG, role: "buildings" });
     expect(imp.status).toBe(200);
@@ -352,7 +352,7 @@ describe("project API", () => {
   });
 
   it("maps: defaults, edit, delete, preset; targets pass through", async () => {
-    await campusWithTwoMaps();
+    await parklandWithTwoMaps();
     const m = await post("/api/maps", { name: "Car park", centre: CENTRE });
     expect(m.body).toMatchObject({ scale: 2500, rotationDeg: 0, sizeMm: { width: 420, height: 297 }, marker: true, sent: null });
     const p = await patch(`/api/maps/${m.body.id}`, { rotationDeg: -30, name: "Car park north" });
@@ -363,7 +363,7 @@ describe("project API", () => {
     const pr = await post("/api/style/preset", { name: "Dark" });
     expect(pr.body.presetName).toBe("Dark");
     const t = await get("/api/targets");
-    expect(t.body).toEqual({ documents: [{ docId: "doc-1", title: "Campus.af", artboards: [] }] });
+    expect(t.body).toEqual({ documents: [{ docId: "doc-1", title: "Parkland.af", artboards: [] }] });
   });
 });
 
@@ -382,7 +382,7 @@ describe("app window API", () => {
   });
 
   it("preview/area: 409 until data is fetched, then projected bounds contain every feature", async () => {
-    await post("/api/project/new", { name: "C", area: { placeName: "Campus", bboxWgs84: CAMPUS }, preset: "Light" });
+    await post("/api/project/new", { name: "C", area: { placeName: "Parkland", bboxWgs84: PARKLAND }, preset: "Light" });
     const empty = await get("/api/preview/area");
     expect(empty.status).toBe(409);
     expect(empty.body.error).toBe("Fetch the data first.");
@@ -411,7 +411,7 @@ describe("app window API", () => {
   });
 
   it("maps/:id/preview equals buildMapJob; unknown map is 404", async () => {
-    const { a } = await campusWithTwoMaps();
+    const { a } = await parklandWithTwoMaps();
     const r = await get(`/api/maps/${a.id}/preview`);
     expect(r.status).toBe(200);
     const want = JSON.parse(JSON.stringify(buildMapJob(srv.session.current, srv.session.data, a.id)));
@@ -420,7 +420,7 @@ describe("app window API", () => {
   });
 
   it("POST /api/maps/:id/link sets target and clears resizeArtboard", async () => {
-    const { a, b } = await campusWithTwoMaps();
+    const { a, b } = await parklandWithTwoMaps();
     docs[0].artboards.push({ name: "Blank", mapIds: [], widthMm: 100, heightMm: 100 });
     await patch(`/api/maps/${a.id}`, { target: null, resizeArtboard: true });
     const r = await post(`/api/maps/${a.id}/link`, { docId: "doc-1", artboardIndex: 0, artboardName: "Blank" });
@@ -437,7 +437,7 @@ describe("app window API", () => {
   });
 
   it("re-linking to another same-size artboard reads Changed since sent; the same artboard stays Up to date", async () => {
-    const { a } = await campusWithTwoMaps();
+    const { a } = await parklandWithTwoMaps();
     docs[0].artboards.push({ name: "A", mapIds: [], widthMm: 420, heightMm: 297 }, { name: "B", mapIds: [], widthMm: 420, heightMm: 297 });
     expect((await post(`/api/maps/${a.id}/link`, { docId: "doc-1", artboardIndex: 0, artboardName: "A" })).status).toBe(200);
     const s = await post("/api/send", { mapIds: [a.id] });
@@ -456,7 +456,7 @@ describe("app window API", () => {
   });
 
   it("re-linking to an artboard in another document reads Changed since sent", async () => {
-    const { a } = await campusWithTwoMaps();
+    const { a } = await parklandWithTwoMaps();
     docs[0].artboards.push({ name: "A", mapIds: [], widthMm: 420, heightMm: 297 });
     docs.push({ docId: "doc-2", title: "Other.af", artboards: [{ name: "A", mapIds: [], widthMm: 420, heightMm: 297 }] });
     await post(`/api/maps/${a.id}/link`, { docId: "doc-1", artboardIndex: 0, artboardName: "A" });
@@ -467,7 +467,7 @@ describe("app window API", () => {
   });
 
   it("link: bad input is 400, an unknown map 404, Affinity's refusal 502 and leaves the map unchanged", async () => {
-    const { a } = await campusWithTwoMaps();
+    const { a } = await parklandWithTwoMaps();
     docs[0].artboards.push({ name: "Blank", mapIds: [], widthMm: 100, heightMm: 100 });
     expect((await post(`/api/maps/${a.id}/link`, { docId: "doc-1", artboardIndex: -1, artboardName: "Blank" })).status).toBe(400);
     expect((await post(`/api/maps/${a.id}/link`, { docId: "doc-1", artboardIndex: 0 })).status).toBe(400);
@@ -480,7 +480,7 @@ describe("app window API", () => {
   });
 
   it("match returns fids; a bad filter gives 400 with position", async () => {
-    await campusWithTwoMaps();
+    await parklandWithTwoMaps();
     await post("/api/data/import", { path: BNG, role: "buildings" });
     const all = (await get("/api/data/buildings/features?limit=10")).body.rows.map((x: any) => x.fid);
     const m = await get("/api/data/buildings/match?filter=" + encodeURIComponent("name contains 'a'"));
@@ -493,7 +493,7 @@ describe("app window API", () => {
   });
 
   it("features sorts numbers numerically and puts nulls last", async () => {
-    await campusWithTwoMaps();
+    await parklandWithTwoMaps();
     const pt = { type: "Point" as const, coordinates: [0, 0] as [number, number] };
     const mk = (fid: string, name: string, h: number | null) => ({ fid, name, geometry: pt, attrs: { h } });
     srv.session.data.landmarks = DATASET([mk("a", "Alpha", 10), mk("b", "Bravo", 9), mk("c", "Charlie", null), mk("d", "Delta", 100), mk("e", "Echo", 9)]);
@@ -506,7 +506,7 @@ describe("app window API", () => {
   });
 
   it("projections offers bng+utm in London, utm only in Paris; POST area changes the hash", async () => {
-    const { a } = await campusWithTwoMaps();
+    const { a } = await parklandWithTwoMaps();
     const list = (await get("/api/projections")).body;
     expect(list.map((p: any) => p.id)).toEqual(["bng", "utm"]);
     expect(list[0]).toMatchObject({ id: "bng", suggested: true });
@@ -533,7 +533,7 @@ describe("app window API", () => {
 
   it("projection text has no jargon; omitted params use the offered ones; no project gives 409", async () => {
     expect((await get("/api/projections")).status).toBe(409);
-    await campusWithTwoMaps();
+    await parklandWithTwoMaps();
     for (const p of (await get("/api/projections")).body) {
       expect(p.name + " " + p.description).not.toMatch(/EPSG|CRS/i);
     }
@@ -711,11 +711,11 @@ describe("when Affinity is absent or slow", () => {
   const done = (id: string, result: unknown) =>
     fetch(`${b2}/affinity/done?id=${id}`, { headers: { ...CONNECT, "X-Geo-Result": encodeURIComponent(JSON.stringify(result)) } });
   const wait = (ms: number) => new Promise((res) => setTimeout(res, ms));
-  const DOCS = { ok: true, result: { documents: [{ docId: "doc-1", title: "Campus.af", artboards: [] }] } };
-  const SENT = { ok: true, result: { created: 1, updated: 0, removed: 0, keptEdited: [], resized: false, warnings: [], objectIds: ["paths:1"], docId: "doc-1", docTitle: "Campus.af" } };
+  const DOCS = { ok: true, result: { documents: [{ docId: "doc-1", title: "Parkland.af", artboards: [] }] } };
+  const SENT = { ok: true, result: { created: 1, updated: 0, removed: 0, keptEdited: [], resized: false, warnings: [], objectIds: ["paths:1"], docId: "doc-1", docTitle: "Parkland.af" } };
 
   async function oneMap(): Promise<string> {
-    await j("POST", "/api/project/new", { name: "C", area: { placeName: "Campus", bboxWgs84: CAMPUS }, preset: "Light" });
+    await j("POST", "/api/project/new", { name: "C", area: { placeName: "Parkland", bboxWgs84: PARKLAND }, preset: "Light" });
     await j("POST", "/api/data/refresh", {});
     const m = (await (await j("POST", "/api/maps", { name: "Late", centre: CENTRE })).json()) as any;
     await j("PATCH", `/api/maps/${m.id}`, { target: TARGET });

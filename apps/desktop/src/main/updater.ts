@@ -11,7 +11,9 @@ export interface Updater {
   autoDownload: boolean;
   autoInstallOnAppQuit: boolean;
   checkForUpdates(): Promise<unknown>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- must stay compatible with Electron's EventEmitter signatures
   on(event: string, listener: (...args: any[]) => void): unknown;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- as above
   removeListener(event: string, listener: (...args: any[]) => void): unknown;
 }
 
@@ -33,7 +35,7 @@ export interface UpdaterDeps {
   restart: () => void;
 }
 
-/** Packaged builds update themselves; a development run only with GEO_UPDATE_FEED (the acceptance test's feed). */
+/** Packaged builds update themselves; a development run only with GEO_UPDATE_FEED (used to test the updater). */
 export function shouldRunUpdater(isPackaged: boolean, feed: string | undefined): boolean {
   return isPackaged || !!feed;
 }

@@ -11,6 +11,7 @@ const text = (s: Record<string, any>) => String(s.run ?? s.uses ?? "");
 const indexOf = (needle: string) => job.steps.findIndex((s) => text(s).includes(needle));
 const tagCheck = job.steps.find((s) => String(s.env?.TAG ?? "").includes("github.ref_name"));
 const publish = job.steps.find((s) => text(s).includes("electron-builder"));
+const draft = job.steps.find((s) => text(s).includes("gh release create"));
 
 describe("release workflow", () => {
   it("runs on version tags only, on one Windows job", () => {
@@ -19,11 +20,14 @@ describe("release workflow", () => {
     expect(job["runs-on"]).toBe("windows-latest");
   });
 
-  it("can write releases and uses only the built-in token, on the publish step alone", () => {
+  it("can write releases and uses only the built-in token, on the draft and publish steps alone", () => {
     expect(wf.permissions).toEqual({ contents: "write" });
     expect(wf.env).toBeUndefined();
+    expect(draft).toBeDefined();
+    expect(draft).not.toBe(publish);
+    expect(draft?.env?.GH_TOKEN).toBe("${{ secrets.GITHUB_TOKEN }}");
     expect(publish?.env).toEqual({ GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" });
-    const others = job.steps.filter((s) => s !== publish);
+    const others = job.steps.filter((s) => s !== publish && s !== draft);
     expect(others.every((s) => !JSON.stringify(s).includes("secrets."))).toBe(true);
     const secrets = raw.match(/secrets\.[A-Za-z_]+/g) ?? [];
     expect(new Set(secrets)).toEqual(new Set(["secrets.GITHUB_TOKEN"]));
@@ -44,7 +48,7 @@ describe("release workflow", () => {
     expect(tagCheck?.env).toEqual({ TAG: "${{ github.ref_name }}" });
     expect(tagCheck?.run).toContain("$env:TAG");
     expect(String(tagCheck?.run)).not.toContain("${{");
-    expect(raw.match(/\$\{\{\s*github\.ref_name\s*\}\}/g)).toHaveLength(1);
+    expect(raw.match(/\$\{\{\s*github\.ref_name\s*\}\}/g)).toHaveLength(2);
   });
 
   it("checks the tag against both package.json versions", () => {
@@ -65,6 +69,27 @@ describe("release workflow", () => {
     expect(order.every((i) => i >= 0)).toBe(true);
     for (let i = 1; i < order.length; i++) expect(order[i - 1]).toBeLessThan(order[i]!);
     expect(text(publish!)).toContain("electron-builder --projectDir apps/desktop --publish always");
+  });
+});
+
+describe("release workflow draft step", () => {
+  it("creates the draft after the build and before the publish step", () => {
+    const build = indexOf("npm run build:app");
+    expect(build).toBeGreaterThanOrEqual(0);
+    expect(job.steps.indexOf(draft!)).toBeGreaterThan(build);
+    expect(job.steps.indexOf(draft!)).toBeLessThan(job.steps.indexOf(publish!));
+  });
+
+  it("creates the release only when none exists, and passes the tag through env", () => {
+    const run = String(draft?.run);
+    expect(draft?.shell).toBe("pwsh");
+    expect(draft?.env?.TAG).toBe("${{ github.ref_name }}");
+    expect(run).not.toContain("${{");
+    expect(run).toContain('gh release view "$env:TAG"');
+    expect(run).toContain(
+      'gh release create "$env:TAG" --draft --title "AffinityGeo $env:VERSION" --verify-tag --notes "See CHANGELOG.md."',
+    );
+    expect(run.indexOf("gh release view")).toBeLessThan(run.indexOf("gh release create"));
   });
 });
 

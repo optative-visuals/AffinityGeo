@@ -3,10 +3,12 @@ import { IPC } from "../shared/geo-app.js";
 
 /** The parts of a BrowserWindow the guard uses. */
 export interface GuardWindow {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- must stay compatible with Electron's EventEmitter signatures
   on(event: string, listener: (...args: any[]) => void): unknown;
   close(): void;
   webContents: {
     send(channel: string): void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- must stay compatible with Electron's EventEmitter signatures
     on(event: string, listener: (...args: any[]) => void): unknown;
   };
 }

@@ -79,10 +79,10 @@ describe("Shell", () => {
   });
 
   it("TopBar shows the project's name, never the long place name", () => {
-    const named = { ...project, name: "Campus maps", area: { placeName: "Hyde Park, London, England" } } as unknown as NonNullable<AppState["project"]>;
+    const named = { ...project, name: "Parkland maps", area: { placeName: "Hyde Park, London, England" } } as unknown as NonNullable<AppState["project"]>;
     resetApp({ project: named });
     render(<TopBar />);
-    expect(screen.getByText("Campus maps")).toBeTruthy();
+    expect(screen.getByText("Parkland maps")).toBeTruthy();
     expect(screen.queryByText(/Kensington/)).toBeNull();
   });
 });

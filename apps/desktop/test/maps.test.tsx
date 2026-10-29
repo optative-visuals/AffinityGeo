@@ -120,7 +120,7 @@ describe("Maps screen", () => {
 
   it("Gallery shows Target not open and Change document re-targets", async () => {
     const targets: TargetDocument[] = [{
-      docId: "d2", title: "Campus maps",
+      docId: "d2", title: "Parkland maps",
       artboards: [{ name: "Lake", mapIds: [], widthMm: 297, heightMm: 210 }, { name: "Park", mapIds: [], widthMm: 297, heightMm: 210 }],
     }];
     const fake = start([mk("m1", "Library", { target: { docId: "d1", docTitle: "Old plan" } })],
@@ -134,7 +134,7 @@ describe("Maps screen", () => {
     fireEvent.click(within(card).getByRole("button", { name: "Change document…" }));
     fireEvent.change(within(card).getByLabelText("Document"), { target: { value: "d2" } });
     await flush();
-    expect(fake.patchMap).toHaveBeenCalledWith("m1", { target: { docId: "d2", docTitle: "Campus maps" } });
+    expect(fake.patchMap).toHaveBeenCalledWith("m1", { target: { docId: "d2", docTitle: "Parkland maps" } });
 
     fireEvent.change(within(card).getByLabelText("Artboard"), { target: { value: "1" } });
     await flush();
@@ -143,13 +143,13 @@ describe("Maps screen", () => {
 
   it("the gallery target line names the document and artboard", async () => {
     const targets: TargetDocument[] = [{
-      docId: "d2", title: "Campus maps",
+      docId: "d2", title: "Parkland maps",
       artboards: [{ name: "Lake", mapIds: [{ projectId: "p1", mapId: "m1" }], widthMm: 420, heightMm: 297 }],
     }];
-    start([mk("m1", "Library", { target: { docId: "d2", docTitle: "Campus maps" } }), mk("m2", "Park")],
+    start([mk("m1", "Library", { target: { docId: "d2", docTitle: "Parkland maps" } }), mk("m2", "Park")],
       { statuses: { m1: "Changed since sent" }, targets, view: "gallery" });
     await flush();
-    expect(within(screen.getByRole("article", { name: "Library" })).getByText("Campus maps · Lake")).toBeTruthy();
+    expect(within(screen.getByRole("article", { name: "Library" })).getByText("Parkland maps · Lake")).toBeTruthy();
     expect(within(screen.getByRole("article", { name: "Library" })).getByText("Changed since sent")).toBeTruthy();
     expect(within(screen.getByRole("article", { name: "Park" })).getByText("No document chosen")).toBeTruthy();
   });
@@ -501,7 +501,7 @@ describe("Send, one map at a time (live-test fixes)", () => {
   });
 });
 
-describe("Send: honest summary when a run stops (fix round 1)", () => {
+describe("Send: honest summary when a run stops ", () => {
   const needsChoice = (mapId: string): SendResult => ({ mapId, ok: false, needsResizeChoice: true, artboardMm: { width: 297, height: 210 } });
   const okResult = (mapId: string, created = 1): SendResult => ({ mapId, ok: true, created, updated: 0, removed: 0 });
 

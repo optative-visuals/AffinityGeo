@@ -1,6 +1,6 @@
 # Releasing AffinityGeo
 
-A release is built by GitHub, not on your computer. You push a version tag and GitHub Actions tests the code, builds the Windows installer and attaches it to a **draft** release.
+A release is built by GitHub, not on your computer. You push a version tag and GitHub Actions tests the code, builds the Windows installer and attaches it to a **draft** release. The workflow creates that draft first, so the installer, `latest.yml` and the blockmap all land in one release.
 
 ## Steps
 

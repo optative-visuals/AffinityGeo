@@ -1,5 +1,5 @@
 // The whole sendMap flow against an in-memory fake SDK (fake-sdk.cjs). Proves the logic;
-// the Affinity MCP check (task report) proves the SDK calls.
+// the real SDK calls are checked by hand in Affinity.
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -9,11 +9,11 @@ import { crsFromEpsg } from "../../geo-core/src/crs.js";
 import { newProject } from "../../geo-core/src/project/file.js";
 import { buildMapJob } from "../../geo-core/src/project/mapjob.js";
 
-const require = createRequire(import.meta.url);
-const dm = require("../src/draw-map.js");
-const sendPlan = require("../src/send-plan.js");
-const plan = require("../src/plan.js");
-const { fakeSdk, makeDoc, Transform } = require("./fake-sdk.cjs");
+const requireCjs = createRequire(import.meta.url);
+const dm = requireCjs("../src/draw-map.js");
+const sendPlan = requireCjs("../src/send-plan.js");
+const plan = requireCjs("../src/plan.js");
+const { fakeSdk, makeDoc, Transform } = requireCjs("./fake-sdk.cjs");
 
 const deps = { sendPlan, plan };
 const BNG = crsFromEpsg(27700);
@@ -109,7 +109,7 @@ describe("sendMap in a fake document", () => {
     expect(r).toMatchObject({ created: 0, updated: 0, removed: 0, keptEdited: [] });
   });
 
-  it("keeps a hand recolour and recolours the rest (Review Focus 1)", () => {
+  it("keeps a hand recolour and recolours the rest", () => {
     const p = project();
     dm.sendMap([doc], { job: jobFor(p), target, resizeArtboard: null, reset: false }, deps);
     const buildings = byName("Buildings").kids;
@@ -167,7 +167,7 @@ describe("sendMap in a fake document", () => {
     expect(JSON.parse(ab2.kids[0].tags.get("geo:mapframe")).rect).toMatchObject({ x: 0, y: 0 });
   });
 
-  it("says which document to open and draws nowhere else (Review Focus 3)", () => {
+  it("says which document to open and draws nowhere else", () => {
     const before = doc.allNodes().length;
     expect(() => dm.sendMap([doc], { job: jobFor(project()), target: { docId: "gone", docTitle: "Signs.af" }, resizeArtboard: null, reset: false }, deps))
       .toThrow("Open 'Signs.af' in Affinity to update Map 1");
@@ -331,7 +331,7 @@ describe("sendMap in a fake document", () => {
   });
 });
 
-describe("fix round 1: failures, transformed groups, resizing about the centre", () => {
+describe("failures, transformed groups, resizing about the centre", () => {
   const send = (job, extra = {}) => dm.sendMap([doc], { job, target, resizeArtboard: false, reset: false, ...extra }, deps);
   const PPM = 72 / 25.4;
 
@@ -403,7 +403,7 @@ describe("fix round 1: failures, transformed groups, resizing about the centre",
     expect(r.updated).toBeGreaterThan(0);
     const outline = byName("Frame").spreadBaseBox;
     expect(outline.width).toBeCloseTo(400 * PPM * 1.5, 1);
-    // resizeArtboard false: about the frame's current centre (controller ruling)
+    // resizeArtboard false: about the frame's current centre
     expect(outline.x + outline.width / 2).toBeCloseTo(outlineBefore.x + outlineBefore.width / 2, 1);
     expect(outline.y + outline.height / 2).toBeCloseTo(outlineBefore.y + outlineBefore.height / 2, 1);
     const rect = JSON.parse(group.tags.get("geo:mapframe")).rect;

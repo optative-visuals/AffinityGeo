@@ -23,7 +23,7 @@ const rows = (n: number) => Array.from({ length: n }, (_, i) => ({ fid: `f${i}`,
 
 function start(connected = true) {
   resetApp({
-    project: project([map("m1", "Campus"), map("m2", "Town")]), selectedMapIds: ["m2"], screen: "data",
+    project: project([map("m1", "Parkland"), map("m2", "Town")]), selectedMapIds: ["m2"], screen: "data",
     connection: { connected, busy: false }, preview: { status: "none" },
     counts: { buildings: 2400 } as unknown as AppState["counts"],
   });
@@ -162,7 +162,7 @@ describe("Data screen", () => {
   });
 });
 
-describe("Data screen fix round 1", () => {
+describe("Data screen filter caret", () => {
   it("puts the caret under the right character when the filter has leading spaces", async () => {
     const fake = start();
     fake.match.mockRejectedValue(new ApiFail(400, "bad", 9));

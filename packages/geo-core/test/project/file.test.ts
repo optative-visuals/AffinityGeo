@@ -24,7 +24,7 @@ const tmp = () => mkdtempSync(join(tmpdir(), "afgeo-"));
 
 describe("newProject", () => {
   it("starts with OSM sources, no maps and no data", () => {
-    const p = newProject("Campus", area, "Light");
+    const p = newProject("Parkland", area, "Light");
     expect(p.version).toBe(1);
     expect(p.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(p.dataVersion).toBe(0);
@@ -38,11 +38,11 @@ describe("newProject", () => {
 
 describe("saveProject / loadProject", () => {
   it("round-trips a project with 2 maps and 3 roles of data", async () => {
-    const path = join(tmp(), "campus.afgeo");
-    const project = { ...newProject("Campus", area, "Light"), maps: [map("a"), map("b")], dataVersion: 3, fetchedAt: "2026-10-28T10:00:00Z" };
+    const path = join(tmp(), "parkland.afgeo");
+    const project = { ...newProject("Parkland", area, "Light"), maps: [map("a"), map("b")], dataVersion: 3, fetchedAt: "2026-10-28T10:00:00Z" };
     const data: ProjectData = { water: ds("Water"), buildings: ds("Buildings"), paths: ds("Paths") };
     await saveProject(path, project, data);
-    expect(readdirSync(join(path, ".."))).toEqual(["campus.afgeo"]); // no .tmp left behind
+    expect(readdirSync(join(path, ".."))).toEqual(["parkland.afgeo"]); // no .tmp left behind
     const loaded = await loadProject(path);
     expect(loaded.project).toEqual(project);
     expect(loaded.data).toEqual(data);
@@ -51,11 +51,11 @@ describe("saveProject / loadProject", () => {
 
   it("saves to one path at once each use their own temp file: all succeed, none left behind", async () => {
     const dir = tmp();
-    const path = join(dir, "campus.afgeo");
+    const path = join(dir, "parkland.afgeo");
     const data: ProjectData = { water: ds("Water") };
     const saves = Array.from({ length: 20 }, (_, n) => n).map((n) => saveProject(path, { ...newProject(`P${n}`, area, "Light") }, data));
     await Promise.all(saves);
-    expect(readdirSync(dir)).toEqual(["campus.afgeo"]);
+    expect(readdirSync(dir)).toEqual(["parkland.afgeo"]);
   });
 
   it("a failed save removes its temp file", async () => {
@@ -112,7 +112,7 @@ describe("saveProject / loadProject", () => {
 
 describe("setRoleSource", () => {
   it("puts a file dataset in the snapshot and clears it when switched back to OSM", () => {
-    const p0 = newProject("Campus", area, "Light");
+    const p0 = newProject("Parkland", area, "Light");
     const d0: ProjectData = { buildings: ds("OSM buildings"), water: ds("Water") };
     const mine = ds("My buildings");
     const src = { kind: "file", path: "b.geojson", datasetName: "My buildings" } as const;
@@ -129,7 +129,7 @@ describe("setRoleSource", () => {
   });
 
   it("requires a dataset for a file source", () => {
-    const p = newProject("Campus", area, "Light");
+    const p = newProject("Parkland", area, "Light");
     expect(() => setRoleSource(p, {}, "paths", { kind: "file", path: "p.geojson", datasetName: "P" })).toThrow(/dataset/i);
   });
 });

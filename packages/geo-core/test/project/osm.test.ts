@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DataError, areaWarning, buildOverpassQuery, fetchOsm, parseOverpass } from "../../src/project/osm.js";
 import type { Bbox } from "../../src/types.js";
 
-const fixture = JSON.parse(readFileSync(new URL("./fixtures/osm-campus.json", import.meta.url), "utf8"));
+const fixture = JSON.parse(readFileSync(new URL("./fixtures/osm-parkland.json", import.meta.url), "utf8"));
 const BUSY = "OpenStreetMap is busy right now. Try again in a minute — your current data is unchanged.";
 const TOO_BIG = "That area is too big for a street-level map. Choose a smaller area.";
 const small: Bbox = [-0.1690, 51.5040, -0.1640, 51.5065];

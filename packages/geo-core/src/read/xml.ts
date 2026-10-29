@@ -23,7 +23,7 @@ export async function readXmlGeo(
     // xmldom also reports harmless warnings (e.g. a missing space between attributes): only errors fail the read.
     const onError = (level: string, msg: string) => { if (level !== "warning") errors.push(msg); };
     const doc = new DOMParser({ onError }).parseFromString(
-      text.replace(/^﻿/, ""),
+      text.replace(/^\uFEFF/, ""),
       "text/xml",
     ) as unknown as Document;
     if (errors.length || !doc.documentElement) throw new Error("bad xml");

@@ -28,7 +28,6 @@ const huge: PlaceResult = { name: "London, England", centre: [-0.19, 51.52], bbo
 const mid: PlaceResult = { name: "Kensington Gardens, London", centre: [-0.14, 51.50], bboxWgs84: [-0.17, 51.48, -0.11, 51.52] };
 
 const presets = [{ name: "Light" }, { name: "Dark" }, { name: "Mono" }, { name: "Garden" }];
-const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
 const flushReal = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 
 function stubApi() {

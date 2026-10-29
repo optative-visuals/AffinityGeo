@@ -19,7 +19,7 @@ export const GUIDE: Record<Screen, GuidePage> = {
       "Use a file… swaps one kind of data, such as buildings, for your own file.",
       "Pick a projection: the way the curved Earth is flattened onto your page. The suggested one suits most maps.",
     ],
-    goodToKnow: "Keep the area small. A campus or a town centre fetches in seconds; a whole city can take a minute.",
+    goodToKnow: "Keep the area small. A park or a town centre fetches in seconds; a whole city can take a minute.",
   },
   maps: {
     title: "The Maps screen",

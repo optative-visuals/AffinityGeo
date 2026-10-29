@@ -79,7 +79,7 @@ function tokenize(text: string): Token[] {
         i += nm[0].length;
         continue;
       }
-      const wm = /^[\p{L}_][\p{L}\p{N}_.\-]*/u.exec(rest);
+      const wm = /^[\p{L}_][\p{L}\p{N}_.-]*/u.exec(rest);
       if (wm) {
         tokens.push({ kind: "word", text: wm[0], pos: i });
         i += wm[0].length;

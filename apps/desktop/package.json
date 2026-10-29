@@ -9,7 +9,7 @@
   "main": "dist/main.cjs",
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "node ../../node_modules/typescript-7/bin/tsc --noEmit -p tsconfig.json",
     "build": "node build.mjs"
   },
   "devDependencies": {

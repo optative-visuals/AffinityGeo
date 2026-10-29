@@ -1,10 +1,10 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
-const require = createRequire(import.meta.url);
-const { tick, runOp } = require("../src/connect.js");
-const sendPlan = require("../src/send-plan.js");
-const plan = require("../src/plan.js");
+const requireCjs = createRequire(import.meta.url);
+const { tick, runOp } = requireCjs("../src/connect.js");
+const sendPlan = requireCjs("../src/send-plan.js");
+const plan = requireCjs("../src/plan.js");
 
 const ok = (body) => ({ status: 200, body: JSON.stringify(body) });
 
@@ -186,7 +186,7 @@ describe("runOp", () => {
     expect(() => runOp(op, { ...env(d), getDocuments: () => [] })).toThrow(/Open a document in Affinity first/);
   });
 
-  it("refuses unknown and old 1a job types", () => {
+  it("refuses unknown and retired job types", () => {
     const d = fakeDrawMap();
     expect(() => runOp({ op: "explode" }, env(d))).toThrow(/Unknown job type/);
     expect(() => runOp({ op: "drawLayer" }, env(d))).toThrow(/Unknown job type/);
@@ -202,10 +202,10 @@ describe("runOp", () => {
 });
 
 describe("readVersion", () => {
-  const { readVersion } = require("../src/connect.js");
-  const fs = require("node:fs");
-  const os = require("node:os");
-  const path = require("node:path");
+  const { readVersion } = requireCjs("../src/connect.js");
+  const fs = requireCjs("node:fs");
+  const os = requireCjs("node:os");
+  const path = requireCjs("node:path");
   it("reads <home>/affinity/version.js, and falls back to unknown", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "geo-ver-"));
     try {
@@ -218,7 +218,7 @@ describe("readVersion", () => {
 });
 
 describe("makeGet", () => {
-  const { makeGet } = require("../src/connect.js");
+  const { makeGet } = requireCjs("../src/connect.js");
   function fakeHttp() {
     const made = [];
     const HttpRequest = {

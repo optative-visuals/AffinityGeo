@@ -79,7 +79,7 @@ const COMPASS = ["north", "north-north-east", "north-east", "east-north-east", "
   "north-north-west"];
 
 /**
- * The rotation helper: rotationDeg is the compass bearing that points up on the map (1b-A ruling),
+ * The rotation helper: rotationDeg is the compass bearing that points up on the map,
  * so 90 reads "Up is 90° — east". The word is the nearest of the 16 compass points.
  */
 export function upLabel(rotationDeg: number): string {

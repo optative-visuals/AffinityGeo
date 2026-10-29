@@ -9,7 +9,7 @@
     "./view": "./src/project/view.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "node ../../node_modules/typescript-7/bin/tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@tmcw/togeojson": "7.1.3",
