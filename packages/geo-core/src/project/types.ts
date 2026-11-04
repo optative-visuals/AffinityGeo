@@ -1,4 +1,5 @@
 import type { Bbox, Dataset, GeometryKind, JobFeature } from "../types.js";
+import type { Ring } from "./location.js";
 
 export type RoleId = "water" | "green" | "landuse" | "buildings" | "landmarks" | "paths" | "steps"
   | "minorRoads" | "mainRoads" | "rail" | "carParks" | "poi";
@@ -10,18 +11,30 @@ export type RoleSource = { kind: "osm" } | { kind: "file"; path: string; dataset
 export interface AreaSpec { placeName: string; bboxWgs84: Bbox; projectionId: "bng" | "utm"; projectionParams?: Record<string, number>; }
 export interface MapTarget { docId: string; docTitle: string; }           // artboard found by its geo:map tag
 export interface SentRecord { at: string; hash: string; objectIds: string[]; }
+/** One place on the map: a box or a drawn shape, plus a margin of surrounding context. */
+export interface LocationSpec {
+  id: string; name: string; placeName: string;
+  kind: "box" | "shape"; ring: Ring; contextM: number;
+  dataVersion: number; fetchedAt: string | null;
+}
 export interface MapSpec {
   id: string; name: string; centre: [number, number];                   // [lon, lat]
+  locationId: string; showContext: boolean;
   scale: number; rotationDeg: number; sizeMm: { width: number; height: number };
   marker: boolean; target: MapTarget | null; resizeArtboard: boolean | null; // null = not asked yet
   sent: SentRecord | null;
 }
 export interface Project {
-  version: 1; id: string; name: string; area: AreaSpec;
+  version: 2; id: string; name: string;
+  area: AreaSpec;               // the projection, plus placeName/bboxWgs84 kept in step: see syncArea
+  locations: LocationSpec[];
   sources: Record<RoleId, RoleSource>; style: ProjectStyle; maps: MapSpec[];
-  dataVersion: number; fetchedAt: string | null;
+  dataVersion: number;          // bumps whenever any location's data or any source changes (UI cache key)
+  fetchedAt: string | null;     // latest of the locations' fetchedAt
 }
 export type ProjectData = Partial<Record<RoleId, Dataset>>;                 // the snapshot, in each dataset's own CRS
+/** OSM snapshots per location id, plus the datasets of file sources (project-wide). */
+export interface ProjectSnapshot { locations: Record<string, ProjectData>; files: ProjectData }
 export interface MapLayerJob { role: RoleId; name: string; kind: GeometryKind; style: RoleStyle; features: JobFeature[]; } // mm, frame-local
 /**
  * background: the paper under the map, drawn by Affinity as a "Background" layer (geo:role "background")

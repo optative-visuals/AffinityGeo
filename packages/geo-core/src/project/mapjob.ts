@@ -11,7 +11,8 @@ import type { FrameTransform, GeoFeature, Geometry, Position, ProjectedLayer } f
 import { TOO_BIG } from "./osm.js";
 import { ROLE_IDS, ROLE_LABELS } from "./roles.js";
 import { fnv, stable, styleHash } from "./styles.js";
-import type { MapJob, MapLayerJob, MapSpec, Project, ProjectData } from "./types.js";
+import { dataFor } from "./file.js";
+import type { MapJob, MapLayerJob, MapSpec, Project, ProjectSnapshot } from "./types.js";
 
 function findMap(project: Project, mapId: string): MapSpec {
   const map = project.maps.find((m) => m.id === mapId);
@@ -79,8 +80,9 @@ function clipGeometry(g: Geometry, box: ClipBox): Geometry | null {
   }
 }
 
-export function buildMapJob(project: Project, data: ProjectData, mapId: string): MapJob {
+export function buildMapJob(project: Project, snap: ProjectSnapshot, mapId: string): MapJob {
   const map = findMap(project, mapId);
+  const data = dataFor(project, snap, map.locationId);
   const proj = areaProjection(project);
   const { width, height } = map.sizeMm;
 

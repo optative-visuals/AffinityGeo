@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import proj4 from "proj4";
 import { crsFromEpsg } from "../../src/crs.js";
+import { boxRing } from "../../src/project/location.js";
 import { newProject } from "../../src/project/file.js";
 import { buildMapJob } from "../../src/project/mapjob.js";
 import {
@@ -33,8 +34,8 @@ describe("mapFrameCorners", () => {
   });
   it("the corners agree with buildMapJob", () => {
     const rotationDeg = -30;
-    const p = newProject("T", { placeName: "T", bboxWgs84: [-1, 51, 0, 52], projectionId: "bng" }, "Light");
-    p.maps.push({ id: "m1", name: "M", ...mk({ rotationDeg }), marker: false, target: null, resizeArtboard: null, sent: null });
+    const p = newProject("T", { placeName: "T", bboxWgs84: [-1, 51, 0, 52], projectionId: "bng" }, "Light", { name: "T", placeName: "T", kind: "box", ring: boxRing([-1, 51, 0, 52]), contextM: 0 });
+    p.maps.push({ id: "m1", name: "M", ...mk({ rotationDeg }), marker: false, target: null, resizeArtboard: null, sent: null, locationId: "loc-1", showContext: false });
     const [tl, tr, br] = mapFrameCorners(area, mk({ rotationDeg }));
     // A point 1 m inside the top-left corner, along the frame's own axes, as a one-point dataset.
     const u = [(tr![0] - tl![0]) / 1050, (tr![1] - tl![1]) / 1050];
@@ -45,7 +46,7 @@ describe("mapFrameCorners", () => {
       features: [{ fid: "f", name: "F", geometry: { type: "Point", coordinates: pt }, attrs: {} }],
       report: { read: 1, skipped: 0, reasons: [] },
     };
-    const job = buildMapJob(p, { poi: ds }, "m1");
+    const job = buildMapJob(p, { locations: { "loc-1": { poi: ds } }, files: {} }, "m1");
     const xy = job.layers[0]!.features[0]!.paths.flat();
     expect(xy[0]!).toBeCloseTo(0.4, 2); expect(xy[1]!).toBeCloseTo(0.4, 2);
   });
