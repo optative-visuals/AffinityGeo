@@ -3,8 +3,9 @@
 import { WGS84 } from "../crs.js";
 import { cleanText, featureName } from "../read/naming.js";
 import type { Bbox, Dataset, GeoFeature, Geometry, GeometryKind, Position } from "../types.js";
+import { fetchRing, ringAreaKm2, ringBbox, type Ring as AreaRing } from "./location.js";
 import { ROLE_IDS, ROLE_LABELS, roleForOsmTags } from "./roles.js";
-import type { RoleId } from "./types.js";
+import type { LocationSpec, RoleId } from "./types.js";
 import { MAX_KM2, TOO_BIG, areaKm2, areaWarning } from "./view.js";
 
 export class DataError extends Error {
@@ -18,9 +19,23 @@ export { TOO_BIG, areaWarning };
 
 // ---- query ----
 
-export function buildOverpassQuery(bboxWgs84: Bbox): string {
-  const [w, s, e, n] = bboxWgs84;
-  const bb = `(${[s, w, n, e].map((v) => v.toFixed(6)).join(",")})`;
+/** What to fetch: a rectangle, or the inside of a polygon (lon/lat vertices). */
+export type FetchArea = { bbox: Bbox } | { ring: AreaRing };
+
+/** A box with no margin is fetched as a plain bbox; anything else as its polygon. */
+export function fetchAreaFor(loc: LocationSpec): FetchArea {
+  return loc.kind === "box" && loc.contextM === 0 ? { bbox: ringBbox(loc.ring) } : { ring: fetchRing(loc) };
+}
+
+export function buildOverpassQuery(area: FetchArea): string {
+  let bb: string;
+  if ("bbox" in area) {
+    const [w, s, e, n] = area.bbox;
+    bb = `(${[s, w, n, e].map((v) => v.toFixed(6)).join(",")})`;
+  } else {
+    // Overpass wants "lat lon lat lon …".
+    bb = `(poly:"${area.ring.map(([lon, lat]) => `${lat.toFixed(6)} ${lon.toFixed(6)}`).join(" ")}")`;
+  }
   const both = (sel: string) => [`way${sel}`, `relation${sel}`];
   const sels = [
     'way["highway"]',
@@ -199,15 +214,16 @@ export function parseOverpass(json: unknown): Partial<Record<RoleId, Dataset>> {
 
 // ---- fetch ----
 
-export async function fetchOsm(bboxWgs84: Bbox, fetchImpl: typeof fetch = fetch): Promise<Partial<Record<RoleId, Dataset>>> {
-  if (areaKm2(bboxWgs84) > MAX_KM2) throw new DataError(TOO_BIG);
+export async function fetchOsm(area: FetchArea, fetchImpl: typeof fetch = fetch): Promise<Partial<Record<RoleId, Dataset>>> {
+  const km2 = "bbox" in area ? areaKm2(area.bbox) : ringAreaKm2(area.ring);
+  if (km2 > MAX_KM2) throw new DataError(TOO_BIG);
   let res: Response;
   try {
     // One request per refresh, no automatic retry: the public server asks us to go easy.
     res = await fetchImpl(OVERPASS_URL, {
       method: "POST",
       headers: { "User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded" },
-      body: "data=" + encodeURIComponent(buildOverpassQuery(bboxWgs84)),
+      body: "data=" + encodeURIComponent(buildOverpassQuery(area)),
     });
   } catch { throw new DataError(BUSY); }
   if (!res.ok) throw new DataError(BUSY);
