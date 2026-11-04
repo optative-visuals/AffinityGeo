@@ -240,7 +240,10 @@ describe("bleed margin in map jobs", () => {
     const job = buildMapJob(p, snapOf({ poi: pt }), "m1");
     expect(job.context!.layers[0]!.features[0]!.paths[0]![0]).toBeCloseTo(-30, 2);
     expect(job.marker).toMatchObject({ x: 210, y: 148.5 });
-    expect(job.mask).toEqual(buildMapJob(p, snapOf({ poi: pt }), "m1", { bleed: false }).mask);
+    // The mask is trimmed to the drawn area, so with the margin it is the bleed box, not the frame.
+    const bx = job.bleedMm!.x, by = job.bleedMm!.y;
+    expect(new Set(job.mask!.ring.map(([x, y]) => `${x},${y}`))).toEqual(
+      new Set([`${-bx},${-by}`, `${420 + bx},${-by}`, `${420 + bx},${297 + by}`, `${-bx},${297 + by}`]));
   });
 
   it("leaves the hash alone", () => {
@@ -309,10 +312,80 @@ describe("locations in map jobs", () => {
     });
   });
 
-  it("mask ring is unclipped and follows rotation", () => {
+  // The untrimmed location ring in frame mm, computed independently of buildMapJob (no rotation).
+  const rawRing = (p: Project): [number, number][] => {
+    const LL = "+proj=longlat +datum=WGS84 +no_defs";
+    const m = p.maps[0]!;
+    const [cx, cy] = proj4(LL, BNG.proj4, m.centre) as [number, number];
+    const k = 1000 / m.scale;
+    const hw = (m.sizeMm.width / 1000) * m.scale / 2, hh = (m.sizeMm.height / 1000) * m.scale / 2;
+    return p.locations[0]!.ring.map((pt) => {
+      const [x, y] = proj4(LL, BNG.proj4, pt) as [number, number];
+      return [(x - (cx - hw)) * k, (cy + hh - y) * k];
+    });
+  };
+  const onSegment = ([x, y]: number[], [ax, ay]: number[], [bx, by]: number[]) => {
+    const len = Math.hypot(bx! - ax!, by! - ay!);
+    const dist = Math.abs((bx! - ax!) * (ay! - y!) - (ax! - x!) * (by! - ay!)) / len;
+    const t = ((x! - ax!) * (bx! - ax!) + (y! - ay!) * (by! - ay!)) / (len * len);
+    return dist <= 0.01 && t >= -1e-6 && t <= 1 + 1e-6;
+  };
+  // A shape edge (lon -0.16, from lat 51.5 to 51.51) runs through a frame centred on it.
+  const edgeProject = (over: Partial<MapSpec> = {}) => shapeProject({ centre: [-0.1601, 51.505], scale: 500, ...over });
+
+  it("a location much bigger than the frame gets the drawn-area rectangle as its mask", () => {
+    const p = shapeProject({ scale: 5000 });
+    p.locations[0]!.ring = [[-0.3, 51.4], [-0.05, 51.4], [-0.05, 51.6], [-0.3, 51.6]];
+    const job = buildMapJob(p, parkSnap(), "m1");
+    const bx = job.bleedMm!.x, by = job.bleedMm!.y;
+    expect(job.mask!.ring).toHaveLength(4);
+    expect(new Set(job.mask!.ring.map(([x, y]) => `${x},${y}`))).toEqual(
+      new Set([`${-bx},${-by}`, `${420 + bx},${-by}`, `${420 + bx},${297 + by}`, `${-bx},${297 + by}`]));
+  });
+
+  it("a location edge crossing the frame: the mask stays inside the drawn area and keeps the edge", () => {
+    const p = edgeProject();
+    const job = buildMapJob(p, parkSnap(), "m1");
+    const bx = job.bleedMm!.x, by = job.bleedMm!.y;
+    const raw = rawRing(p);
+    const ring = job.mask!.ring;
+    const eps = 0.011;
+    for (const [x, y] of ring) {
+      expect(x).toBeGreaterThanOrEqual(-bx - eps); expect(x).toBeLessThanOrEqual(420 + bx + eps);
+      expect(y).toBeGreaterThanOrEqual(-by - eps); expect(y).toBeLessThanOrEqual(297 + by + eps);
+    }
+    const onEdge = (pt: number[]) => raw.some((a, i) => onSegment(pt, a, raw[(i + 1) % raw.length]!));
+    const onBox = ([x, y]: number[]) => [x! + bx, 420 + bx - x!, y! + by, 297 + by - y!].some((d) => Math.abs(d) <= eps);
+    for (const pt of ring) expect(onEdge(pt) || onBox(pt)).toBe(true);
+    expect(ring.filter(onEdge).length).toBeGreaterThanOrEqual(2);
+    expect(ring.some(([x]) => x! < 420 / 2)).toBe(true); // the location side survives
+    expect(ring.some(([x]) => x! > 420 + bx)).toBe(false); // the far side is cut away
+    expect(ring.at(-1)).not.toEqual(ring[0]);
+  });
+
+  it("without bleed the mask is trimmed to the frame box", () => {
+    const job = buildMapJob(edgeProject(), parkSnap(), "m1", { bleed: false });
+    for (const [x, y] of job.mask!.ring) {
+      expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThanOrEqual(420);
+      expect(y).toBeGreaterThanOrEqual(0); expect(y).toBeLessThanOrEqual(297);
+    }
+    expect(job.mask!.ring.some(([x]) => x === 0)).toBe(true);
+  });
+
+  it("a frame entirely outside its location has no mask", () => {
+    const p = shapeProject({ centre: [0.5, 51.505], scale: 500 });
+    const job = buildMapJob(p, parkSnap(), "m1");
+    expect("mask" in job).toBe(false);
+  });
+
+  it("the mask follows rotation and is still trimmed", () => {
     const p = shapeProject({ rotationDeg: 90, scale: 500 });
-    const ring = buildMapJob(p, parkSnap(), "m1").mask!.ring;
-    expect(ring.some(([x, y]) => x < 0 || y < 0 || x > 420 || y > 297)).toBe(true);
+    const job = buildMapJob(p, parkSnap(), "m1");
+    const bx = job.bleedMm!.x, by = job.bleedMm!.y;
+    for (const [x, y] of job.mask!.ring) {
+      expect(x).toBeGreaterThanOrEqual(-bx - 0.011); expect(x).toBeLessThanOrEqual(420 + bx + 0.011);
+      expect(y).toBeGreaterThanOrEqual(-by - 0.011); expect(y).toBeLessThanOrEqual(297 + by + 0.011);
+    }
   });
 
   it("context only when showContext", () => {

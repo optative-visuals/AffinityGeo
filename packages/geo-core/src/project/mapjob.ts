@@ -176,16 +176,17 @@ export function buildMapJob(project: Project, snap: ProjectSnapshot, mapId: stri
   };
   const layers = buildLayers();
 
-  // The location outline in frame-local mm: projected, rotated and scaled like the features, never clipped.
+  // The location outline in frame-local mm: projected, rotated and scaled like the features, then trimmed to the
+  // drawn area (frame plus bleed) so the mask never runs past what is sent. Outside the location entirely: no mask.
   const extras: Pick<MapJob, "mask" | "context"> = {};
   if (!isLegacyMap(project, map)) {
     const loc = findLocation(project, map);
-    extras.mask = {
-      ring: loc.ring.map((pt) => {
-        const [x, y] = worldToPage(t, ...(rotate(proj4(WGS84.proj4, dst.proj4, pt) as Position) as [number, number]));
-        return [r2(x), r2(y)];
-      }),
-    };
+    const full = loc.ring.map((pt) => worldToPage(t, ...(rotate(proj4(WGS84.proj4, dst.proj4, pt) as Position) as [number, number])));
+    const drawn: ClipBox = [-bleedMm.x, -bleedMm.y, width + bleedMm.x, height + bleedMm.y];
+    const ring = clipPolygon(full as ClipPoint[], drawn) as Position[];
+    const last = ring[ring.length - 1], first = ring[0];
+    if (last && first && last[0] === first[0] && last[1] === first[1]) ring.pop();
+    if (ring.length >= 3) extras.mask = { ring: ring.map(([x, y]) => [r2(x!), r2(y!)]) };
     if (map.showContext) extras.context = { opacity: 0.5, layers: buildLayers() };
   }
 
