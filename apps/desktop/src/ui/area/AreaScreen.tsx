@@ -8,7 +8,7 @@ import { Shell } from "../shell/Shell.js";
 import { toast } from "../shell/Toast.js";
 import type { TopBarProps } from "../shell/TopBar.js";
 import { getActions, useApp } from "../store.js";
-import { formatKm2 } from "./BoxEditor.js";
+import { formatKm2 } from "./AreaEditor.js";
 import { FetchPanel, useFetchData } from "./fetch.js";
 import { platform } from "../platform.js";
 import { MapCanvas } from "../map/MapCanvas.js";

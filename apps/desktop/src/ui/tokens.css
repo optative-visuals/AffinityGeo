@@ -345,14 +345,45 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); outline: 
 .place-item:hover { background: var(--tile); }
 .place-item .muted { font-size: var(--fs-small); }
 
-.box-editor { display: flex; flex-direction: column; gap: 6px; }
-.box-svg { width: 100%; height: 260px; background: var(--field); border: 1px solid var(--border); border-radius: var(--radius); touch-action: none; }
-.box-outline { fill: color-mix(in srgb, var(--muted) 18%, transparent); stroke: var(--muted); stroke-width: 1px; }
-.box-body { fill: color-mix(in srgb, var(--blue) 12%, transparent); stroke: var(--blue); stroke-width: 2px; cursor: move; }
-.box-handle { fill: var(--panel-raised); stroke: var(--blue); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
-.box-handle-left, .box-handle-right { cursor: ew-resize; }
-.box-handle-top, .box-handle-bottom { cursor: ns-resize; }
-.box-readout { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+/* The area editor: a box or shape over the street map. The overlay only takes the pointer on the shape and its
+   handles, so the map pans and zooms everywhere else. */
+.area-editor { display: flex; flex-direction: column; gap: 8px; }
+.area-editor-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.area-editor-bar .segmented > button { flex: none; min-width: 64px; }
+.area-map {
+  position: relative; height: 300px; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius); touch-action: none;
+}
+.basemap-overlay > .area-overlay { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+.area-place { fill: color-mix(in srgb, var(--muted) 10%, transparent); stroke: var(--muted); stroke-width: 1px; stroke-dasharray: 2 3; pointer-events: none; }
+.area-other path { fill: color-mix(in srgb, var(--muted) 8%, transparent); stroke: var(--muted); stroke-width: 1px; }
+.area-other { pointer-events: none; }
+.area-other text {
+  font-size: var(--fs-small); fill: var(--muted);
+  paint-order: stroke; stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round;
+}
+.area-fetched { fill: none; stroke: var(--blue); stroke-width: 1.25px; stroke-dasharray: 5 4; opacity: 0.8; pointer-events: none; }
+.area-shape {
+  fill: color-mix(in srgb, var(--blue) 14%, transparent); stroke: var(--blue); stroke-width: 2px; stroke-linejoin: round;
+  pointer-events: visiblePainted; cursor: move;
+}
+.area-handle, .area-corner {
+  fill: var(--panel-raised); stroke: var(--blue); stroke-width: 1.5px; pointer-events: auto; outline: none;
+}
+.area-handle-left, .area-handle-right { cursor: ew-resize; }
+.area-handle-top, .area-handle-bottom { cursor: ns-resize; }
+.area-corner { cursor: grab; }
+.area-corner:active { cursor: grabbing; }
+.area-corner.is-selected { fill: var(--blue); stroke: var(--panel-raised); }
+.area-handle:focus-visible, .area-corner:focus-visible { stroke: var(--text); stroke-width: 2.5px; }
+.area-add {
+  fill: var(--panel-raised); stroke: var(--blue); stroke-width: 1px; opacity: 0.75; pointer-events: auto; cursor: copy;
+}
+.area-add:hover { opacity: 1; fill: var(--blue); }
+.area-size { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.area-editor > .help, .area-editor .help-bad { margin: 0; }
+.area-context-label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.area-context-value { font-variant-numeric: tabular-nums; }
 .readout { font-weight: 600; font-size: 15px; }
 .help-warn { color: var(--amber); }
 .help-bad { color: var(--red); }

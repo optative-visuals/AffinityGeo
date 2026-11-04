@@ -3,15 +3,20 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaceResult } from "@affinitygeo/geo-core";
-import { TOO_BIG, type AreaSpec, type ProjectStyle } from "@affinitygeo/geo-core/view";
+import { CONTEXT_DEFAULT_M, TOO_BIG, ringBbox, type AreaSpec, type ProjectStyle } from "@affinitygeo/geo-core/view";
 import { ApiFail, api, type ProjectionOption } from "../src/ui/api.js";
 import { platform } from "../src/ui/platform.js";
 import { AreaScreen } from "../src/ui/area/AreaScreen.js";
 import { NewProject, resetSearchClock } from "../src/ui/area/NewProject.js";
-import { BoxEditor } from "../src/ui/area/BoxEditor.js";
 import { App } from "../src/ui/App.js";
 import { getSendState, resetSend } from "../src/ui/maps/SendSummary.js";
 import { getApp, resetApp, type AppState } from "../src/ui/store.js";
+
+// The street map runs its offline fallback, so no real map is made.
+vi.mock("maplibre-gl", () => {
+  class Stub { constructor() { throw new Error("no map in tests"); } }
+  return { Map: Stub, NavigationControl: Stub, AttributionControl: Stub };
+});
 
 type Project = NonNullable<AppState["project"]>;
 const style = { presetName: "T", roles: {} } as unknown as ProjectStyle;
@@ -40,6 +45,7 @@ function stubApi() {
 }
 
 beforeEach(() => {
+  vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
   resetSearchClock();
   resetSend();
   resetApp();
@@ -74,7 +80,7 @@ describe("New project", () => {
     expect(places).toHaveBeenLastCalledWith("Read");
   });
 
-  it("lists the results and shows the box for the chosen place", async () => {
+  it("lists the results and shows the area editor for the chosen place", async () => {
     vi.useFakeTimers();
     stubApi();
     vi.spyOn(api, "places").mockResolvedValue([small, huge]);
@@ -86,8 +92,8 @@ describe("New project", () => {
     fireEvent.click(within(list).getByRole("button", { name: /Hyde Park/ }));
     await act(() => vi.advanceTimersByTimeAsync(0));
     expect(screen.getByLabelText("Project name")).toHaveProperty("value", "Hyde Park");
-    expect(screen.getByLabelText("Area box")).toBeTruthy();
-    expect(screen.getByTestId("area-readout").textContent).toMatch(/^\d+\.\d km²$/);
+    expect(screen.getByLabelText("Area editor")).toBeTruthy();
+    expect(screen.getByTestId("area-readout").textContent).toMatch(/^\d+\.\d km² · \d+\.\d km² with context$/);
   });
 
   async function pick(place: PlaceResult) {
@@ -102,12 +108,33 @@ describe("New project", () => {
     await act(() => vi.advanceTimersByTimeAsync(0));
   }
 
-  it("BoxEditor shows km² and disables Create above 25 km²", async () => {
+  const createButton = () => screen.getByRole("button", { name: "Create and fetch data" }) as HTMLButtonElement;
+
+  it("starts a huge place small enough to fetch, and disables Create once the context makes it too big", async () => {
     vi.useFakeTimers();
     await pick(huge);
-    expect(screen.getByTestId("area-readout").textContent).toMatch(/km²$/);
+    expect(screen.queryByText(TOO_BIG)).toBeNull();
+    expect(createButton().disabled).toBe(false);
+    fireEvent.change(screen.getByLabelText("Surrounding context"), { target: { value: "1000" } });
     expect(screen.getByText(TOO_BIG)).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Create and fetch data" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(createButton().disabled).toBe(true);
+  });
+
+  it("disables Create while the shape's edges cross", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 400, height: 300, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} } as DOMRect);
+    await pick(small);
+    fireEvent.click(screen.getByRole("button", { name: "Shape" }));
+    const at = (n: number) => { const c = screen.getByRole("button", { name: `Corner ${n}` }); return [Number(c.getAttribute("cx")), Number(c.getAttribute("cy"))] as const; };
+    const [x1] = at(1), [x2, y2] = at(2), [, y3] = at(3);
+    const [x4, y4] = at(4);
+    // Corner 4 (top left) goes out past the right edge: the closing edge then crosses it.
+    const corner4 = screen.getByRole("button", { name: "Corner 4" });
+    fireEvent.pointerDown(corner4, { pointerId: 1, clientX: x4, clientY: y4 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: x2 + (x2 - x1) / 2, clientY: (y2 + y3) / 2 });
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    expect(screen.getByText(/edges cross/)).toBeTruthy();
+    expect(createButton().disabled).toBe(true);
   });
 
   it("warns above 3 km² but still allows Create", async () => {
@@ -138,10 +165,14 @@ describe("New project", () => {
     expect(created).toHaveBeenCalledTimes(1);
     const [name, a, preset] = created.mock.calls[0]!;
     expect(name).toBe("Hyde Park");
+    expect(Object.keys(a).sort()).toEqual(["contextM", "kind", "placeName", "ring"]);
     expect(a.placeName).toBe("Hyde Park, London, England");
+    expect(a.kind).toBe("box");
+    expect(a.contextM).toBe(CONTEXT_DEFAULT_M);
     // The box is the place grown by 10 %.
-    expect(a.bboxWgs84[0]).toBeLessThan(-0.17);
-    expect(a.bboxWgs84[2]).toBeGreaterThan(-0.15);
+    const [w, , e] = ringBbox(a.ring);
+    expect(w).toBeLessThan(-0.17);
+    expect(e).toBeGreaterThan(-0.15);
     expect(preset).toBe("Dark");
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/Fetching from OpenStreetMap… 0 s/)).toBeTruthy();
@@ -216,72 +247,6 @@ describe("New project", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create and fetch data" }));
     await act(() => vi.advanceTimersByTimeAsync(0));
     expect(getSendState().summary).toBeNull();
-  });
-});
-
-describe("BoxEditor", () => {
-  it("dragging the right edge handle widens the box", () => {
-    const onChange = vi.fn();
-    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 400, height: 300, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} } as DOMRect);
-    render(<BoxEditor place={small} bbox={[-0.171, 51.504, -0.149, 51.516]} onChange={onChange} />);
-    const handle = screen.getByLabelText("Drag the right edge");
-    fireEvent.pointerDown(handle, { pointerId: 1, clientX: 300, clientY: 150 });
-    fireEvent.pointerMove(window, { pointerId: 1, clientX: 330, clientY: 150 });
-    fireEvent.pointerUp(window, { pointerId: 1, clientX: 330, clientY: 150 });
-    expect(onChange).toHaveBeenCalled();
-    const last = onChange.mock.calls.at(-1)![0] as number[];
-    expect(last[2]).toBeGreaterThan(-0.149);
-    expect(last[0]).toBeCloseTo(-0.171, 5);
-  });
-});
-
-describe("BoxEditor handles", () => {
-  it("are 14 px on screen, measured from the fitted size", () => {
-    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 400, height: 300, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} } as DOMRect);
-    render(<BoxEditor place={small} bbox={[-0.171, 51.504, -0.149, 51.516]} onChange={() => {}} />);
-    const vbW = Number(screen.getByLabelText("Area box").getAttribute("viewBox")!.split(" ")[2]);
-    const w = Number(screen.getByLabelText("Drag the right edge").getAttribute("width"));
-    expect(w).toBeCloseTo((14 * vbW) / 300, 3);
-  });
-});
-
-describe("BoxEditor view", () => {
-  /** The viewBox as [x, y, w, h]. */
-  const viewBox = () => screen.getByLabelText("Area box").getAttribute("viewBox")!.split(" ").map(Number) as [number, number, number, number];
-  /** Every handle lies wholly inside the view (the svg is square-fitted, so the viewBox is what shows). */
-  function expectHandlesInside(): void {
-    const [x, y, w, h] = viewBox();
-    for (const edge of ["left", "right", "top", "bottom"]) {
-      const r = screen.getByLabelText(`Drag the ${edge} edge`);
-      const rx = Number(r.getAttribute("x")), ry = Number(r.getAttribute("y"));
-      const rw = Number(r.getAttribute("width")), rh = Number(r.getAttribute("height"));
-      expect(rx, edge).toBeGreaterThanOrEqual(x);
-      expect(ry, edge).toBeGreaterThanOrEqual(y);
-      expect(rx + rw, edge).toBeLessThanOrEqual(x + w);
-      expect(ry + rh, edge).toBeLessThanOrEqual(y + h);
-    }
-  }
-  beforeEach(() => {
-    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 400, height: 260, right: 400, bottom: 260, x: 0, y: 0, toJSON() {} } as DOMRect);
-  });
-
-  it("fits the outline and the box together, so a box bigger than the place keeps all its handles in view", () => {
-    render(<BoxEditor place={small} bbox={[-0.21, 51.48, -0.89, 51.54]} onChange={() => {}} />);
-    expectHandlesInside();
-  });
-
-  it("refits when the box ends up beyond the view", () => {
-    const { rerender } = render(<BoxEditor place={small} bbox={[-0.171, 51.504, -0.149, 51.516]} onChange={() => {}} />);
-    expectHandlesInside();
-    rerender(<BoxEditor place={small} bbox={[-0.171, 51.47, -0.149, 51.482]} onChange={() => {}} />);
-    expectHandlesInside();
-  });
-
-  it("keeps the view still while the box stays inside it", () => {
-    const { rerender } = render(<BoxEditor place={small} bbox={[-0.171, 51.504, -0.149, 51.516]} onChange={() => {}} />);
-    const before = viewBox();
-    rerender(<BoxEditor place={small} bbox={[-0.1705, 51.504, -0.149, 51.516]} onChange={() => {}} />);
-    expect(viewBox()).toEqual(before);
   });
 });
 

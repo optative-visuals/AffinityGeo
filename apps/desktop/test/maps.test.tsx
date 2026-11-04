@@ -21,7 +21,7 @@ const W = 400, H = 300;
 
 const mk = (id: string, name: string, over: Partial<MapSpec> = {}): MapSpec => ({
   id, name, centre: [-0.155, 51.51], scale: 2500, rotationDeg: 0, sizeMm: { width: 420, height: 297 },
-  marker: true, target: null, resizeArtboard: null, sent: null, ...over,
+  marker: true, target: null, resizeArtboard: null, sent: null, locationId: "l1", showContext: false, ...over,
 });
 
 type Project = NonNullable<AppState["project"]>;
@@ -40,7 +40,7 @@ function fakeApi() {
     mapPreview: vi.spyOn(api, "mapPreview").mockImplementation(async (id) => ({
       mapId: id, mapName: id, projectId: "p1", sizeMm: { width: 420, height: 297 }, background: { fill: "#ffffff" }, layers: [], marker: null, hash: "h",
     })),
-    statuses: vi.spyOn(api, "statuses").mockImplementation(async () => Object.entries(getApp().statuses).map(([mapId, status]) => ({ mapId, status }))),
+    statuses: vi.spyOn(api, "statuses").mockImplementation(async () => Object.entries(getApp().statuses).map(([mapId, status]) => ({ mapId, status, outside: false }))),
     targets: vi.spyOn(api, "targets").mockImplementation(async () => ({ documents: getApp().targets })),
     addMap: vi.spyOn(api, "addMap").mockImplementation(async (input) => {
       const m = mk("new", input.name, { centre: input.centre });

@@ -1,12 +1,11 @@
-// The new-project dialog: search for a place, adjust the box, name it, pick a look, then create and fetch the data.
+// The new-project dialog: search for a place, adjust its area on the street map, name it, pick a look, then create and fetch the data.
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import type { PlaceResult } from "@affinitygeo/geo-core";
-import { MAX_KM2, areaKm2, type Bbox } from "@affinitygeo/geo-core/view";
 import { api } from "../api.js";
 import { closeSummary } from "../maps/SendSummary.js";
 import { toast } from "../shell/Toast.js";
 import { getActions } from "../store.js";
-import { BoxEditor, initialBox } from "./BoxEditor.js";
+import { AreaEditor, areaError, initialArea, type AreaValue } from "./AreaEditor.js";
 import { FetchPanel, useFetchData } from "./fetch.js";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -53,7 +52,7 @@ export function NewProject({ onClose }: NewProjectProps) {
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [place, setPlace] = useState<PlaceResult | null>(null);
-  const [bbox, setBbox] = useState<Bbox | null>(null);
+  const [area, setArea] = useState<AreaValue | null>(null);
   const [name, setName] = useState("");
   const [presets, setPresets] = useState<string[]>([]);
   const [preset, setPreset] = useState<string | null>(null);
@@ -99,23 +98,23 @@ export function NewProject({ onClose }: NewProjectProps) {
 
   function choose(p: PlaceResult): void {
     setPlace(p);
-    setBbox(initialBox(p));
+    setArea(initialArea(p));
     setName(firstPart(p.name));
     setCreateError(null);
   }
 
-  const tooBig = bbox ? areaKm2(bbox) > MAX_KM2 : false;
+  const blocked = area ? areaError(area) !== null : true;
 
   async function fetchData(): Promise<void> {
     if (await fetcher.run()) onClose();
   }
 
   async function create(): Promise<void> {
-    if (!place || !bbox || !preset) return;
+    if (!place || !area || !preset) return;
     setCreating(true);
     setCreateError(null);
     try {
-      const project = await api.newProject(name.trim() || firstPart(place.name), { placeName: place.name, bboxWgs84: bbox }, preset);
+      const project = await api.newProject(name.trim() || firstPart(place.name), { placeName: place.name, kind: area.kind, ring: area.ring, contextM: area.contextM }, preset);
       // A different project: the old project's send summary no longer applies.
       closeSummary();
       setCreated(true);
@@ -169,14 +168,13 @@ export function NewProject({ onClose }: NewProjectProps) {
           </div>
         )}
 
-        {place && bbox && !created && (
+        {place && area && !created && (
           <div className="new-step">
             <div className="new-place">
               <strong>{firstPart(place.name)}</strong>
               <button type="button" className="btn btn-small" disabled={working} onClick={() => setPlace(null)}>Search again</button>
             </div>
-            <BoxEditor place={place} bbox={bbox} onChange={setBbox} />
-            <p className="help">Drag an edge to resize the area, or drag inside the box to move it.</p>
+            <AreaEditor value={area} onChange={setArea} place={place} fitKey={`${place.name}|${place.centre.join(",")}`} />
             <div className="field">
               <label className="field-label" htmlFor={`${titleId}-name`}>Project name</label>
               <input id={`${titleId}-name`} type="text" value={name} onChange={(e) => setName(e.target.value)} />
@@ -194,7 +192,7 @@ export function NewProject({ onClose }: NewProjectProps) {
             {createError && <p className="help help-bad" role="alert">{createError}</p>}
             <div className="dialog-buttons">
               <button type="button" className="btn" disabled={working} onClick={onClose}>Cancel</button>
-              <button type="button" className="btn btn-primary" disabled={working || tooBig || !preset}
+              <button type="button" className="btn btn-primary" disabled={working || blocked || !preset}
                 onClick={() => { void create(); }}>Create and fetch data</button>
             </div>
           </div>

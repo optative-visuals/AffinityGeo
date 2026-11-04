@@ -10,7 +10,7 @@ const W = 400, H = 300;
 const style = { presetName: "T", roles: {}, marker: {} } as unknown as ProjectStyle;
 const map = (id: string, centre: [number, number], rotationDeg = 0): MapSpec => ({
   id, name: id, centre, scale: 2500, rotationDeg, sizeMm: { width: 100, height: 100 },
-  marker: false, target: null, resizeArtboard: null, sent: null,
+  marker: false, target: null, resizeArtboard: null, sent: null, locationId: "l1", showContext: false,
 });
 
 class Path2DStub { moveTo() {} lineTo() {} closePath() {} arc() {} }
@@ -122,7 +122,7 @@ describe("MapCanvas paper", () => {
     const [x0, y0] = pr.forward([w, s]);
     const [x1, y1] = pr.forward([e, n]);
     const paperStyle = { presetName: "Light", paper: "#1d2a33", roles: {}, marker: {} } as unknown as ProjectStyle;
-    setup({ style: paperStyle, preview: { bounds: [x0, y0, x1, y1], layers: [] } });
+    setup({ style: paperStyle, preview: { bounds: [x0, y0, x1, y1], layers: [], locations: [] } });
     expect(fills).toContain("#1d2a33");
   });
 });
