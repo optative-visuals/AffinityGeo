@@ -7,13 +7,14 @@ import proj4 from "proj4";
 import { readDataset } from "../../geo-core/src/read/index.js";
 import { crsFromEpsg } from "../../geo-core/src/crs.js";
 import { newProject } from "../../geo-core/src/project/file.js";
+import { boxRing } from "../../geo-core/src/project/location.js";
 import { buildMapJob } from "../../geo-core/src/project/mapjob.js";
 
 const requireCjs = createRequire(import.meta.url);
 const dm = requireCjs("../src/draw-map.js");
 const sendPlan = requireCjs("../src/send-plan.js");
 const plan = requireCjs("../src/plan.js");
-const { fakeSdk, makeDoc, Transform } = requireCjs("./fake-sdk.cjs");
+const { fakeSdk, makeDoc, Node: FakeNode, Transform } = requireCjs("./fake-sdk.cjs");
 
 const deps = { sendPlan, plan };
 const BNG = crsFromEpsg(27700);
@@ -33,13 +34,14 @@ beforeAll(async () => {
 });
 
 function project(over = {}) {
-  const p = newProject("T", { placeName: "T", bboxWgs84: [-1, 51, 0, 52], projectionId: "bng" }, "Light");
+  const p = newProject("T", { placeName: "T", bboxWgs84: [-1, 51, 0, 52], projectionId: "bng" }, "Light",
+    { name: "T", placeName: "T", kind: "box", ring: boxRing([-1, 51, 0, 52]), contextM: 0 });
   p.id = "p1";
   p.maps.push({ id: "m1", name: "Map 1", centre, scale: 5000, rotationDeg: 0, sizeMm: { width: 420, height: 297 },
-    marker: true, target: null, resizeArtboard: null, sent: null, ...over });
+    marker: true, target: null, resizeArtboard: null, sent: null, locationId: "loc-1", showContext: false, ...over });
   return p;
 }
-const jobFor = (p) => buildMapJob(p, data, "m1");
+const jobFor = (p) => buildMapJob(p, { locations: { "loc-1": data }, files: {} }, "m1");
 const target = { docId: "doc-1", docTitle: "Sign.af" };
 
 let doc;
@@ -798,6 +800,204 @@ describe("the map background (paper)", () => {
     doc.remove(byName("Frame"));
     send(jobFor(p));
     expect(byName("Map — Map 1").kids.slice(0, 2).map((k) => k.userDescription)).toEqual(["Frame", "Background"]);
+  });
+});
+
+describe("locations: the mask and the surrounding context", () => {
+  const PPM = 72 / 25.4;
+  const send = (job, extra = {}) => dm.sendMap([doc], { job, target, resizeArtboard: false, reset: false, ...extra }, deps);
+  const square = (d) => [[centre[0] - d, centre[1] - d], [centre[0] + d, centre[1] - d], [centre[0] + d, centre[1] + d], [centre[0] - d, centre[1] + d]];
+  // A shape location around the data: its maps get a mask (and the context when asked for).
+  const shaped = (over = {}) => {
+    const p = project(over);
+    Object.assign(p.locations[0], { kind: "shape", ring: square(0.003), contextM: 200 });
+    return p;
+  };
+  const group = () => byName("Map — Map 1");
+  const mask = () => objects().find((n) => n.tags.get("geo:fid") === "mask:shape");
+  const ctx = () => doc.allNodes().find((n) => n.tags.get("geo:role") === "context");
+  const names = (n) => n.kids.map((k) => k.userDescription);
+  const quiet = { created: 0, updated: 0, removed: 0, keptEdited: [] };
+  const maskRingMm = () => {
+    const rect = JSON.parse(group().tags.get("geo:mapframe")).rect;
+    const mapping = dm.frameMapping(rect, byName("Frame").spreadBaseBox, PPM, plan);
+    return mask().spreadCurve().curves[0].pts.map(([x, y]) => mapping.toMm(x, y));
+  };
+
+  it("a mask job puts the role containers inside the mask, above the background", () => {
+    const p = shaped();
+    const job = jobFor(p);
+    expect(job.mask.ring).toHaveLength(4);
+    expect(job.context).toBeUndefined();
+    const r = send(job);
+    expect(names(group())).toEqual(["Frame", "Background", "Location mask", "You are here"]);
+    const m = mask();
+    expect(m.parent).toBe(group());
+    expect(m.tags.get("geo:role")).toBe("mask");
+    expect(JSON.parse(m.tags.get("geo:sent"))).toEqual({ ring: job.mask.ring });
+    expect(m.fillHex).toBeNull();
+    expect(m.penHex).toBeNull();
+    expect(names(m)).toEqual(["Water", "Buildings"]);
+    expect(m.kids.map((k) => k.tags.get("geo:role"))).toEqual(["water", "buildings"]);
+    for (const [i, pt] of maskRingMm().entries()) {
+      expect(pt[0]).toBeCloseTo(job.mask.ring[i][0], 1);
+      expect(pt[1]).toBeCloseTo(job.mask.ring[i][1], 1);
+    }
+    const features = job.layers.reduce((n, l) => n + l.features.length, 0);
+    expect(r.created).toBe(features + 5); // + the background, ring, dot, label and the mask
+    expect(r.objectIds).toContain("mask:shape");
+    expect(r.warnings).toEqual([]);
+    expect(send(jobFor(p), { sentIds: r.objectIds })).toMatchObject({ ...quiet, warnings: [] });
+  });
+
+  it("re-sending with a mask still finds hand edits inside it, grouped two levels deep as without a mask", () => {
+    const p = shaped();
+    send(jobFor(p));
+    const buildings = byName("Buildings");
+    const victim = buildings.kids[0];
+    const fid = victim.tags.get("geo:fid");
+    victim.fillHex = "#ff00ff"; // the designer's recolour...
+    const outer = new FakeNode("container", "My group"); // ...grouped twice inside its layer
+    const inner = new FakeNode("container", "Detail");
+    buildings.kids.splice(0, 1, outer);
+    outer.parent = buildings;
+    outer.kids.push(inner);
+    inner.parent = outer;
+    inner.kids.push(victim);
+    victim.parent = inner;
+    p.style.roles.buildings.fill = "#123456";
+    const r = send(jobFor(p));
+    expect(r.created).toBe(0);
+    expect(victim.fillHex).toBe("#ff00ff");
+    expect(r.keptEdited).toEqual([expect.objectContaining({ role: "buildings", reason: "edited by hand" })]);
+    expect(objects().filter((n) => n.tags.get("geo:fid") === fid)).toHaveLength(1);
+    expect(dm.selectOnMap([doc], { projectId: "p1", mapId: "m1", role: "buildings", fids: [fid.slice("buildings:".length)] })).toEqual({ selected: 1 });
+  });
+
+  it("an unedited mask follows the location; a reshaped one is kept with a warning, and reset restores it", () => {
+    const p = shaped();
+    send(jobFor(p));
+    p.locations[0].ring = square(0.002);
+    const job2 = jobFor(p);
+    const r = send(job2);
+    expect(r).toMatchObject({ created: 0, updated: 1, removed: 0 });
+    expect(JSON.parse(mask().tags.get("geo:sent"))).toEqual({ ring: job2.mask.ring });
+    expect(maskRingMm()[0][0]).toBeCloseTo(job2.mask.ring[0][0], 1);
+    expect(send(job2)).toMatchObject({ ...quiet, warnings: [] });
+
+    for (const c of mask().pc.curves) c.pts = c.pts.map(([x, y], i) => (i === 0 ? [x - 30, y] : [x, y])); // dragged a node
+    const reshaped = mask().pc.curves[0].pts.slice();
+    p.locations[0].ring = square(0.0025);
+    const r2 = send(jobFor(p));
+    expect(r2.warnings).toContain("You reshaped the location mask in Affinity, so it was kept.");
+    expect(r2.updated).toBe(0);
+    expect(mask().pc.curves[0].pts).toEqual(reshaped);
+    expect(r2.objectIds).toContain("mask:shape");
+    send(jobFor(p), { reset: true });
+    expect(maskRingMm()[0][0]).toBeCloseTo(jobFor(p).mask.ring[0][0], 1);
+    expect(send(jobFor(p))).toMatchObject({ ...quiet, warnings: [] });
+  });
+
+  it("a moved and scaled map group with a mask re-sends quietly; a new size reshapes the mask in place", () => {
+    const p = shaped();
+    send(jobFor(p));
+    group().xf = new Transform(1.5, 100, 40);
+    expect(send(jobFor(p))).toMatchObject({ ...quiet, warnings: [] });
+    p.maps[0].sizeMm = { width: 400, height: 280 };
+    const job2 = jobFor(p);
+    const r = send(job2);
+    expect(r.warnings).toEqual([]);
+    for (const [i, pt] of maskRingMm().entries()) {
+      expect(pt[0]).toBeCloseTo(job2.mask.ring[i][0], 1);
+      expect(pt[1]).toBeCloseTo(job2.mask.ring[i][1], 1);
+    }
+    expect(send(job2)).toMatchObject({ ...quiet, warnings: [] });
+  });
+
+  it("a deleted mask is not recreated (its layers stay where they are); reset recreates it", () => {
+    const p = shaped();
+    const first = send(jobFor(p));
+    const m = mask();
+    for (const k of m.kids.slice()) { doc.remove(k); group().kids.push(k); k.parent = group(); } // released the mask...
+    doc.remove(m); // ...and deleted it
+    const r = send(jobFor(p), { sentIds: first.objectIds });
+    expect(mask()).toBeUndefined();
+    expect(r).toMatchObject({ created: 0, removed: 0 });
+    expect(r.objectIds).toContain("mask:shape"); // remembered as sent, so it stays deleted
+    expect(names(group())).toEqual(["Frame", "Background", "You are here", "Water", "Buildings"]);
+    const r2 = send(jobFor(p), { sentIds: r.objectIds });
+    expect(mask()).toBeUndefined();
+    expect(r2.created).toBe(0);
+    const r3 = send(jobFor(p), { sentIds: r2.objectIds, reset: true });
+    expect(r3.created).toBe(1);
+    expect(names(mask())).toEqual(["Water", "Buildings"]);
+  });
+
+  it("a frame sent before locations existed gains the mask without recreating any object", () => {
+    const p = shaped();
+    const { mask: _m, context: _c, ...legacy } = jobFor(p);
+    const first = send(legacy);
+    const before = objects();
+    const r = send(jobFor(p), { sentIds: first.objectIds });
+    expect(r).toMatchObject({ created: 1, updated: 0, removed: 0, keptEdited: [] });
+    expect(objects().filter((n) => n !== mask())).toEqual(before);
+    expect(names(group())).toEqual(["Frame", "Background", "Location mask", "You are here"]);
+    expect(names(mask())).toEqual(["Water", "Buildings"]);
+  });
+
+  it("a mask the job no longer has goes, and its layers move back out, objects untouched", () => {
+    const p = shaped();
+    const first = send(jobFor(p));
+    const before = objects().filter((n) => n !== mask());
+    Object.assign(p.locations[0], { kind: "box", contextM: 0 }); // back to a plain box
+    const job = jobFor(p);
+    expect(job.mask).toBeUndefined();
+    const r = send(job, { sentIds: first.objectIds });
+    expect(r).toMatchObject({ created: 0, updated: 0, removed: 1, keptEdited: [] });
+    expect(mask()).toBeUndefined();
+    expect(r.objectIds).not.toContain("mask:shape");
+    expect(names(group())).toEqual(["Frame", "Background", "Water", "Buildings", "You are here"]);
+    expect(objects()).toEqual(before);
+  });
+
+  it("the context appears faded under the mask, its opacity set once, and goes when turned off", () => {
+    const p = shaped({ showContext: true });
+    const job = jobFor(p);
+    expect(job.context.opacity).toBe(0.5);
+    const first = send(job);
+    expect(names(group())).toEqual(["Frame", "Background", "Surrounding context", "Location mask", "You are here"]);
+    const c = ctx();
+    expect(names(c)).toEqual(["Water", "Buildings"]);
+    expect(c.kids.map((k) => k.tags.get("geo:role"))).toEqual(["context-water", "context-buildings"]);
+    const ctxFids = c.kids.flatMap((k) => k.kids.map((o) => o.tags.get("geo:fid")));
+    expect(ctxFids.length).toBe(job.context.layers.reduce((n, l) => n + l.features.length, 0));
+    for (const id of ctxFids) expect(id).toMatch(/^context-(water|buildings):/);
+    expect(c.setOpacity).toBe(0.5);
+    expect(fake.opacityCalls).toEqual([0.5]);
+    const again = send(jobFor(p), { sentIds: first.objectIds });
+    expect(again).toMatchObject({ ...quiet, warnings: [] });
+    expect(fake.opacityCalls).toEqual([0.5]); // never set again: the designer's fade wins
+
+    p.maps[0].showContext = false;
+    const off = send(jobFor(p), { sentIds: again.objectIds });
+    expect(ctx()).toBeUndefined();
+    expect(off).toMatchObject({ created: 0, removed: ctxFids.length });
+    expect(off.objectIds.some((id) => id.startsWith("context-"))).toBe(false);
+    expect(names(group())).toEqual(["Frame", "Background", "Location mask", "You are here"]);
+  });
+
+  it("turning the context off keeps a hand-edited context object, and its group", () => {
+    const p = shaped({ showContext: true });
+    send(jobFor(p));
+    const edited = ctx().kids[0].kids[0];
+    edited.fillHex = "#00ff00";
+    p.maps[0].showContext = false;
+    const r = send(jobFor(p));
+    expect(ctx()).toBeDefined();
+    expect(ctx().kids[0].kids).toEqual([edited]);
+    expect(r.keptEdited).toEqual([expect.objectContaining({ role: edited.tags.get("geo:fid").split(":")[0] })]);
+    send(jobFor(p), { reset: true });
+    expect(ctx()).toBeUndefined();
   });
 });
 

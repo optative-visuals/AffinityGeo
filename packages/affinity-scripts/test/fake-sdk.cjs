@@ -6,6 +6,8 @@
 //    composition of its ancestors' transforms and its own, and polyCurve is in BASE space;
 //  - a child added into a transformed group takes spread coordinates (Affinity gives it the
 //    inverse of the group's transform); createSetCurves writes base space.
+//  - any node (a curve too) can hold children: a group inside a curve is its vector mask's content;
+//  - createMoveNodes Inside / Before / After keeps the moved node's spread position.
 // Hooks (fake.hooks) let tests make an AddChildNodes command or a compound command fail.
 // It is NOT a substitute for the MCP check.
 'use strict';
@@ -166,6 +168,7 @@ function command(label, exec) { return { label, exec }; }
 
 function fakeSdk() {
   const hooks = { failAdd: null, failCompound: null, loseAdded: null };
+  const opacityCalls = [];
   const C = {
     NodeChildType: { Main: 'main' },
     AddChildNodesCommandBuilder: {
@@ -217,10 +220,19 @@ function fakeSdk() {
       createSetLineStyle: (s, ls) => command('weight', () => s.nodes.forEach((n) => { n.weight = ls.weight; })),
       createSetCurves: (ci, pc) => command('curves', () => { ci.node.pc = pc; }),
       createDeleteSelection: (s) => command('delete', () => s.nodes.forEach((n) => s.doc.remove(n))),
+      // Before / After: next to target among its siblings; Inside: on top of target's own children.
+      // A moved node keeps its spread position (its transform is rebased on the new parent).
       createMoveNodes: (s, target, type) => command('move', () => s.nodes.forEach((n) => {
-        const p = target.parent; n.parent.kids.splice(n.parent.kids.indexOf(n), 1);
-        const i = p.kids.indexOf(target); p.kids.splice(type === 'After' ? i + 1 : i, 0, n); n.parent = p;
+        const spread = n.baseToSpreadTransform;
+        n.parent.kids.splice(n.parent.kids.indexOf(n), 1);
+        const p = type === 'Inside' ? target : target.parent;
+        if (type === 'Inside') p.kids.push(n);
+        else { const i = p.kids.indexOf(target); p.kids.splice(type === 'After' ? i + 1 : i, 0, n); }
+        n.parent = p;
+        n.xf = Transform.compose(p.baseToSpreadTransform.inverted, spread);
       })),
+      // Live, node.opacity reads back undefined after this: the fake keeps it apart, and counts the calls.
+      createSetOpacity: (s, v) => command('opacity', () => { opacityCalls.push(v); s.nodes.forEach((n) => { n.setOpacity = v; }); }),
       createSetSelection: (s) => command('select', () => { s.doc.selection = s.nodes; }),
       createSetArtboardSizeWithAnchor: (ab, w, h) => command('resize', () => { ab.node.box.width = w; ab.node.box.height = h; }),
     },
@@ -246,7 +258,7 @@ function fakeSdk() {
   };
 
   return {
-    hooks,
+    hooks, opacityCalls,
     C, N, G: { PolyCurve, Curve, CurveBuilder, Rectangle },
     FillDescriptor: { createSolid: (c) => ({ hex: '#' + [c.r, c.g, c.b].map((v) => v.toString(16).padStart(2, '0')).join('') }), createNone: () => ({ hex: null }) },
     Colour: { createRGBA8: (o) => ({ ...o }) },
@@ -258,7 +270,7 @@ function fakeSdk() {
     BlendMode: { Normal: 'normal' },
     Selection: { create: (doc, nodes) => ({ doc, nodes: Array.isArray(nodes) ? nodes : [nodes] }) },
     SpatialAnchor: { TopLeft: 'tl' },
-    NodeMoveType: { After: 'After', Before: 'Before' },
+    NodeMoveType: { After: 'After', Before: 'Before', Inside: 'Inside' },
     StoryBuilder: { create: () => ({ fill: null, text: '', height: null, setToArtisticTextDefaultStyle() {}, applyGlyphDelta(d) { if (d.fill) this.fill = d.fill.hex; if (d.height) this.height = d.height; }, addText(t) { this.text += t; } }) },
     StoryDelta: { createGlyphDouble: (type, v) => (type === 'h' ? { height: v } : {}), createBrushFill: (fd) => ({ fill: fd }) },
     GlyphAttDoubleType: { Height: 'h' },

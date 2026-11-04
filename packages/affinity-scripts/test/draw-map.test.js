@@ -76,6 +76,27 @@ describe("normaliseJob", () => {
   });
 });
 
+describe("locations: context layers and the mask ring", () => {
+  it("adds the context layers as context-<role> layers, and leaves a job without context alone", () => {
+    const water = { role: "water", name: "Water", kind: "polygon", style: style({ order: 2 }), features: [{ fid: "w", name: "", paths: [[0, 0, 1, 0, 1, 1]], closed: true }] };
+    const j = { ...job([water]), context: { opacity: 0.5, layers: [water] } };
+    const out = dm.withContext(j);
+    expect(out.layers.map((l) => l.role)).toEqual(["water", "context-water"]);
+    expect(out.layers[1]).toMatchObject({ name: "Water", kind: "polygon", features: water.features });
+    expect(j.layers).toEqual([water]); // input untouched
+    const plain = job([water]);
+    expect(dm.withContext(plain)).toBe(plain);
+  });
+
+  it("compares mask rings within 0.15 mm, ignoring a repeated closing node", () => {
+    const ring = [[0, 0], [10, 0], [10, 10], [0, 10]];
+    expect(dm.ringSame(ring, ring.map(([x, y]) => [x + 0.1, y - 0.1]))).toBe(true);
+    expect(dm.ringSame(ring, [...ring, [0, 0]])).toBe(true);
+    expect(dm.ringSame(ring, [[0, 0], [10, 0], [10, 10.5], [0, 10]])).toBe(false);
+    expect(dm.ringSame(ring, ring.slice(0, 3))).toBe(false);
+  });
+});
+
 describe("small readers", () => {
   it("formats colours as lowercase #rrggbb, transparent as none", () => {
     expect(dm.colourHex({ r: 255, g: 10, b: 0, alpha: 255 })).toBe("#ff0a00");
