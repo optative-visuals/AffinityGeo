@@ -999,6 +999,33 @@ describe("locations: the mask and the surrounding context", () => {
     send(jobFor(p), { reset: true });
     expect(ctx()).toBeUndefined();
   });
+
+  it("turning the context off keeps the designer's own object inside its group (hand edits win)", () => {
+    const p = shaped({ showContext: true });
+    send(jobFor(p));
+    const note = new FakeNode("curve", "My note"); // drawn by the designer, untagged
+    ctx().kids.push(note);
+    note.parent = ctx();
+    p.maps[0].showContext = false;
+    const r = send(jobFor(p));
+    expect(ctx()).toBeDefined();
+    expect(ctx().kids).toEqual([note]); // the app's own objects and their emptied containers went
+    expect(r.objectIds.some((id) => id.startsWith("context-"))).toBe(false);
+  });
+
+  it("turning the context off keeps a map object the designer dragged into its group", () => {
+    const p = shaped({ showContext: true });
+    send(jobFor(p));
+    const moved = mask().kids.find((k) => k.tags.get("geo:role") === "buildings").kids[0];
+    const fid = moved.tags.get("geo:fid");
+    doc.remove(moved);
+    ctx().kids.push(moved);
+    moved.parent = ctx();
+    p.maps[0].showContext = false;
+    send(jobFor(p));
+    expect(ctx()).toBeDefined();
+    expect(objects().filter((n) => n.tags.get("geo:fid") === fid)).toEqual([moved]);
+  });
 });
 
 describe("linkArtboard", () => {

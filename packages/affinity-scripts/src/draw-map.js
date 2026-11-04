@@ -283,6 +283,12 @@ function children(node) {
   try { return node && node.children ? [...node.children] : []; } catch (e) { return []; }
 }
 
+// The SDK gives a fresh wrapper on every children read: compare nodes with isSameNode.
+function sameNode(a, b) {
+  if (a === b) return true;
+  try { return !!a && !!b && typeof a.isSameNode === 'function' && a.isSameNode(b); } catch (e) { return false; }
+}
+
 function tagOf(node, key) {
   try {
     if (!node || typeof node.getValueForKey !== 'function') return null;
@@ -908,11 +914,23 @@ function sendMap(documents, payload, deps) {
   } else if (wantRing) {
     if (!reset && sentIds.indexOf(MASK_ID) >= 0) maskDeleted = true; else maskAction = 'create';
   }
-  // Context turned off: its group goes with its objects, unless one of them is kept (edited by hand).
+  // Context turned off: its group goes only when everything in it is the app's and is going.
+  // Anything else in it (a kept hand-edited object, the designer's own drawing, a map object
+  // dragged in) keeps the group; then only the emptied context containers go with their objects.
   let ctxGroupGoes = false;
+  const ctxEmptied = [];
   if (ctxGroup && !raw.context) {
-    const going = new Set(p.remove);
-    ctxGroupGoes = !existing.some(function (e) { return e.role.indexOf(CONTEXT_PREFIX) === 0 && !going.has(e.nodeId); });
+    const going = function (n) { return p.remove.some(function (r) { return sameNode(r, n); }); };
+    const emptied = function (c) {
+      const r = tagOf(c, 'geo:role');
+      return r != null && r.indexOf(CONTEXT_PREFIX) === 0 && tagOf(c, 'geo:fid') == null && children(c).every(going);
+    };
+    let allGo = true;
+    for (const c of children(ctxGroup)) {
+      if (emptied(c)) ctxEmptied.push(c);
+      else if (!going(c)) allGo = false;
+    }
+    ctxGroupGoes = allGo;
   }
   const move = function (nodes, anchor, type) {
     return s.C.DocumentCommand.createMoveNodes(sel(doc, nodes), anchor, type, s.C.NodeChildType.Main);
@@ -1189,6 +1207,7 @@ function sendMap(documents, payload, deps) {
     if (removed.length) updateCmds.push(s.C.DocumentCommand.createDeleteSelection(sel(doc, removed)));
     // After its objects (deleted first), so no selection holds a node and its own group.
     if (ctxGroupGoes) updateCmds.push(s.C.DocumentCommand.createDeleteSelection(sel(doc, ctxGroup)));
+    else if (ctxEmptied.length) updateCmds.push(s.C.DocumentCommand.createDeleteSelection(sel(doc, ctxEmptied)));
   } catch (e) {
     // Something failed after objects were made: tag them before giving up (no orphans).
     try { run(doc, createTags); } catch (e2) { /* ignore */ }
