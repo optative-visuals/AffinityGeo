@@ -9,7 +9,7 @@
 //   artboard node      geo:map      {"projectId","mapId"}           name = map name
 //   └ "Map — <name>"   geo:mapframe {"projectId","mapId","rect"}    rect = frame rect at the last send (spread px)
 //     ├ "Frame"        grey outline (found by name, untagged): always the first child
-//     ├ "Background"   geo:role "background": one unstroked rectangle filling the frame in the
+//     ├ "Background"   geo:role "background": one unstroked rectangle filling the frame and its bleed in the
 //     │                style's paper colour (geo:fid "background:frame"), an ordinary map object
 //     ├ <role label>   geo:role <roleId>, in style.order (bottom → top)
 //     │  └ objects     geo:fid "<role>:<fid>", geo:sent = Props as last sent
@@ -115,7 +115,8 @@ function resizedFrame(B, k, wPx, hPx, fromTopLeft) {
  * added on top as two "marker" point layers. The job's background (the paper) becomes one
  * more polygon layer put first, below them all (its order is below every other, so container
  * stacking keeps it lowest too): a single closed
- * rectangle over the whole frame, (0,0)-(width,height) mm, filled, with no stroke.
+ * rectangle over the whole frame, (0,0)-(width,height) mm, filled, with no stroke; with job.bleedMm it
+ * spans (-x,-y)-(width+x,height+y) instead, so it covers the bleed margin like the data layers.
  */
 function normaliseJob(job, plan) {
   let skipped = 0;
@@ -137,11 +138,13 @@ function normaliseJob(job, plan) {
   layers.sort(function (a, b) { return (a.style.order || 0) - (b.style.order || 0); });
   // The background goes first explicitly (not by its order), so no layer can ever sort below it.
   if (job && job.background && job.sizeMm) {
-    const w = job.sizeMm.width, h = job.sizeMm.height;
+    // With a bleed margin (job.bleedMm) the paper spreads past the frame by the same margin as the data layers.
+    const bx = job.bleedMm ? job.bleedMm.x : 0, by = job.bleedMm ? job.bleedMm.y : 0;
+    const x0 = round2(-bx), y0 = round2(-by), x1 = round2(job.sizeMm.width + bx), y1 = round2(job.sizeMm.height + by);
     const lowest = layers.length ? Math.min(-1, (layers[0].style.order || 0) - 1) : -1;
     layers.unshift({ role: BACKGROUND_ROLE, name: BACKGROUND_NAME, kind: 'polygon',
       style: { fill: lower(job.background.fill), stroke: null, strokePt: 0, visible: true, order: lowest, pointRadiusPt: 0 },
-      features: [{ fid: 'frame', name: BACKGROUND_NAME, paths: [[0, 0, w, 0, w, h, 0, h]], closed: true }] });
+      features: [{ fid: 'frame', name: BACKGROUND_NAME, paths: [[x0, y0, x1, y0, x1, y1, x0, y1]], closed: true }] });
   }
   if (job && job.marker) {
     const m = job.marker;

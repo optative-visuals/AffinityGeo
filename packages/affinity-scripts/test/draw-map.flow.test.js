@@ -41,7 +41,7 @@ function project(over = {}) {
     marker: true, target: null, resizeArtboard: null, sent: null, locationId: "loc-1", showContext: false, ...over });
   return p;
 }
-const jobFor = (p) => buildMapJob(p, { locations: { "loc-1": data }, files: {} }, "m1");
+const jobFor = (p, opts) => buildMapJob(p, { locations: { "loc-1": data }, files: {} }, "m1", opts);
 const target = { docId: "doc-1", docTitle: "Sign.af" };
 
 let doc;
@@ -700,6 +700,12 @@ describe("the map background (paper)", () => {
   const near = (a, b) => {
     for (const k of ["x", "y", "width", "height"]) expect(a[k]).toBeCloseTo(b[k], 1);
   };
+  // The frame outline's box grown by the job's bleed margin, scaled like the frame (px per frame mm).
+  const bled = (frame, job) => {
+    const kx = frame.width / job.sizeMm.width, ky = frame.height / job.sizeMm.height;
+    const x = job.bleedMm.x * kx, y = job.bleedMm.y * ky;
+    return { x: frame.x - x, y: frame.y - y, width: frame.width + 2 * x, height: frame.height + 2 * y };
+  };
 
   it("draws one unstroked rectangle in the paper colour filling the frame, at the bottom just above the outline", () => {
     const p = project();
@@ -714,9 +720,29 @@ describe("the map background (paper)", () => {
     expect(bg().penHex).toBeNull();
     expect(bg().weight).toBe(0);
     expect(bg().userDescription).toBe("Background");
-    near(bg().spreadBaseBox, byName("Frame").spreadBaseBox);
+    near(bg().spreadBaseBox, bled(byName("Frame").spreadBaseBox, jobFor(p)));
     expect(sentOf(bg())).toMatchObject({ fill: "#f4f1ea", stroke: null, widthPt: 0, visible: true });
     expect(send(jobFor(p))).toMatchObject({ created: 0, updated: 0, removed: 0, keptEdited: [] });
+  });
+
+  it("spans the bleed margin past the frame on every side; a job without bleedMm fills just the frame", () => {
+    const p = project();
+    const job = jobFor(p);
+    expect(job.bleedMm.x).toBeGreaterThan(0);
+    send(job);
+    const frame = byName("Frame").spreadBaseBox;
+    const box = bg().spreadBaseBox;
+    expect(box.x).toBeLessThan(frame.x);
+    expect(box.y).toBeLessThan(frame.y);
+    expect(box.x + box.width).toBeGreaterThan(frame.x + frame.width);
+    expect(box.y + box.height).toBeGreaterThan(frame.y + frame.height);
+    near(box, bled(frame, job));
+
+    const doc2 = makeDoc({ uuid: "doc-2" });
+    doc = doc2;
+    doc.addArtboard({ x: 0, y: 0, width: 500, height: 500 });
+    dm.sendMap([doc], { job: jobFor(p, { bleed: false }), target: { docId: "doc-2", docTitle: "Sign.af" }, resizeArtboard: true, reset: false }, deps);
+    near(bg().spreadBaseBox, byName("Frame").spreadBaseBox);
   });
 
   it("a restyle (e.g. the Dark preset) recolours it", () => {
@@ -749,7 +775,7 @@ describe("the map background (paper)", () => {
     p.maps[0].sizeMm = { width: 200, height: 150 };
     const r = send(jobFor(p));
     expect(r.keptEdited).toEqual([]);
-    near(bg().spreadBaseBox, byName("Frame").spreadBaseBox);
+    near(bg().spreadBaseBox, bled(byName("Frame").spreadBaseBox, jobFor(p)));
     expect(send(jobFor(p))).toMatchObject({ created: 0, updated: 0, removed: 0, keptEdited: [] });
 
     const doc2 = makeDoc({ uuid: "doc-2" });
@@ -759,7 +785,7 @@ describe("the map background (paper)", () => {
     dm.sendMap([doc], { job: jobFor(p), target: t2, resizeArtboard: true, reset: false }, deps);
     p.maps[0].sizeMm = { width: 297, height: 420 };
     dm.sendMap([doc], { job: jobFor(p), target: t2, resizeArtboard: true, reset: false }, deps);
-    near(bg().spreadBaseBox, byName("Frame").spreadBaseBox);
+    near(bg().spreadBaseBox, bled(byName("Frame").spreadBaseBox, jobFor(p)));
 
     // reshaped by hand: kept and reported, even through another size change
     for (const c of bg().pc.curves) c.pts = c.pts.map(([x, y]) => [x, y * 0.5]);
@@ -769,7 +795,7 @@ describe("the map background (paper)", () => {
     expect(r2.keptEdited).toEqual([expect.objectContaining({ role: "background", reason: "reshaped" })]);
     near(bg().spreadBaseBox, shaped);
     dm.sendMap([doc], { job: jobFor(p), target: t2, resizeArtboard: true, reset: true }, deps);
-    near(bg().spreadBaseBox, byName("Frame").spreadBaseBox);
+    near(bg().spreadBaseBox, bled(byName("Frame").spreadBaseBox, jobFor(p)));
   });
 
   it("a map sent before the background existed gets it on the next send, directly above the outline", () => {

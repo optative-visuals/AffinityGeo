@@ -160,6 +160,7 @@ describe("project API", () => {
     const sends = ops.filter((o) => o.op === "sendMap");
     expect(sends).toHaveLength(2);
     expect(sends[0]).toMatchObject({ target: TARGET, reset: false, sentIds: [], resizeArtboard: true });
+    expect(sends[0].job.bleedMm.x).toBeGreaterThan(0); // the send draws the bleed margin (the preview doesn't)
     expect(await statuses()).toEqual(["Up to date", "Up to date"]);
     const after = (await get("/api/project")).body.project;
     expect(after.maps[0].resizeArtboard).toBe(true); // a new artboard was made at map size
@@ -508,12 +509,21 @@ describe("app window API", () => {
     expect(n).toBeGreaterThan(0);
   });
 
-  it("maps/:id/preview equals buildMapJob; unknown map is 404", async () => {
+  it("maps/:id/preview equals the frame-only buildMapJob (no bleed); unknown map is 404", async () => {
     const { a } = await parklandWithTwoMaps();
     const r = await get(`/api/maps/${a.id}/preview`);
     expect(r.status).toBe(200);
-    const want = JSON.parse(JSON.stringify(buildMapJob(srv.session.current, srv.session.data, a.id)));
+    const want = JSON.parse(JSON.stringify(buildMapJob(srv.session.current, srv.session.data, a.id, { bleed: false })));
     expect(r.body).toEqual(want);
+    expect(r.body).not.toHaveProperty("bleedMm");
+    // The thumbnail shows only the frame: nothing in the preview lies outside it.
+    const { width, height } = r.body.sizeMm;
+    const cs = (r.body.layers as Array<{ features: Array<{ paths: number[][] }> }>).flatMap((l) => l.features.flatMap((f) => f.paths.flat()));
+    expect(cs.length).toBeGreaterThan(0);
+    for (let i = 0; i < cs.length; i += 2) {
+      expect(cs[i]!).toBeGreaterThanOrEqual(0); expect(cs[i]!).toBeLessThanOrEqual(width);
+      expect(cs[i + 1]!).toBeGreaterThanOrEqual(0); expect(cs[i + 1]!).toBeLessThanOrEqual(height);
+    }
     expect((await get("/api/maps/nope/preview")).status).toBe(404);
   });
 

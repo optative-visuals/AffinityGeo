@@ -11,7 +11,7 @@ import { loadProject, newProject } from "../../src/project/file.js";
 import { parseOverpass } from "../../src/project/osm.js";
 import { fnv, stable, styleHash } from "../../src/project/styles.js";
 import { writeZip } from "../../src/project/zip.js";
-import { buildMapJob, isLegacyMap, mapStatusHash } from "../../src/project/mapjob.js";
+import { bleedFraction, buildMapJob, isLegacyMap, mapStatusHash } from "../../src/project/mapjob.js";
 import type { Dataset, Geometry } from "../../src/types.js";
 import type { MapSpec, Project, ProjectData, ProjectSnapshot } from "../../src/project/types.js";
 
@@ -59,7 +59,7 @@ beforeAll(async () => {
 
 describe("buildMapJob", () => {
   it("keeps every coordinate inside the frame", () => {
-    const job = buildMapJob(mkProject(C, { scale: 5000 }), snapOf({ buildings: bng3 }), "m1");
+    const job = buildMapJob(mkProject(C, { scale: 5000 }), snapOf({ buildings: bng3 }), "m1", { bleed: false });
     inFrame(coords(job));
     expect(job.layers[0]!.name).toBe("Buildings");
   });
@@ -67,7 +67,7 @@ describe("buildMapJob", () => {
   it("clips a square straddling the left edge", () => {
     // frame: 420 mm at 1:2500 = 1050 m wide, left edge at E 499475.
     const sq = mkDs("polygon", { type: "Polygon", coordinates: [[[499300, 199950], [499700, 199950], [499700, 200050], [499300, 200050], [499300, 199950]]] });
-    const job = buildMapJob(mkProject([500000, 200000]), snapOf({ buildings: sq }), "m1");
+    const job = buildMapJob(mkProject([500000, 200000]), snapOf({ buildings: sq }), "m1", { bleed: false });
     const xs = job.layers[0]!.features[0]!.paths[0]!.filter((_, i) => i % 2 === 0);
     expect(Math.min(...xs)).toBeGreaterThanOrEqual(0);
     expect(Math.min(...xs)).toBeCloseTo(0, 1);
@@ -93,7 +93,7 @@ describe("buildMapJob", () => {
   });
 
   it("keeps everything inside the frame at -30 degrees, centre fixed", () => {
-    inFrame(coords(buildMapJob(mkProject(C, { scale: 5000, rotationDeg: -30 }), snapOf({ buildings: bng3 }), "m1")));
+    inFrame(coords(buildMapJob(mkProject(C, { scale: 5000, rotationDeg: -30 }), snapOf({ buildings: bng3 }), "m1", { bleed: false })));
     const pt = mkDs("point", { type: "Point", coordinates: [500000, 200000] });
     const [x, y] = buildMapJob(mkProject([500000, 200000], { rotationDeg: -30 }), snapOf({ poi: pt }), "m1").layers[0]!.features[0]!.paths[0]!;
     expect(x).toBeCloseTo(210, 2); expect(y).toBeCloseTo(148.5, 2);
@@ -180,6 +180,75 @@ describe("buildMapJob", () => {
   });
 });
 
+describe("bleedFraction", () => {
+  it("is 0.20 up to 1:500 and 0.05 from 1:25,000, log-interpolated between", () => {
+    expect(bleedFraction(500)).toBeCloseTo(0.2, 10);
+    expect(bleedFraction(100)).toBeCloseTo(0.2, 10);
+    expect(bleedFraction(25000)).toBeCloseTo(0.05, 10);
+    expect(bleedFraction(100000)).toBeCloseTo(0.05, 10);
+    expect(Math.abs(bleedFraction(2500) - 0.138)).toBeLessThan(0.001);
+    expect(Math.abs(bleedFraction(1000) - 0.174)).toBeLessThan(0.001);
+    expect(Math.abs(bleedFraction(10000) - 0.0851)).toBeLessThan(0.001); // the formula gives 0.0851 (the brief rounded it to 0.088)
+  });
+
+  it("decreases monotonically: detailed maps get the most margin", () => {
+    const scales = [100, 500, 750, 1000, 2500, 5000, 10000, 20000, 25000, 50000];
+    for (let i = 1; i < scales.length; i++) expect(bleedFraction(scales[i]!)).toBeLessThanOrEqual(bleedFraction(scales[i - 1]!));
+    expect(bleedFraction(1000)).toBeGreaterThan(bleedFraction(10000));
+  });
+});
+
+describe("bleed margin in map jobs", () => {
+  // frame: 420 x 297 mm at 1:2500 = 1050 x 742.5 m, left edge at E 499475, top edge at N 200371.25.
+  const f = bleedFraction(2500);
+
+  it("computes bleedMm per axis from the frame's own size, and omits it without bleed", () => {
+    const p = mkProject([500000, 200000]);
+    const job = buildMapJob(p, snapOf({}), "m1");
+    expect(job.bleedMm!.x).toBeCloseTo(f * 420, 2);
+    expect(job.bleedMm!.y).toBeCloseTo(f * 297, 2);
+    expect(job.sizeMm).toEqual({ width: 420, height: 297 });
+    expect(buildMapJob(p, snapOf({}), "m1", { bleed: false }).bleedMm).toBeUndefined();
+    expect(buildMapJob(p, snapOf({}), "m1", { bleed: false })).not.toHaveProperty("bleedMm");
+  });
+
+  it("keeps a feature just outside the frame but inside the margin, in frame mm", () => {
+    const pt = mkDs("point", { type: "Point", coordinates: [499400, 200000] }); // 75 m left of the frame
+    const p = mkProject([500000, 200000]);
+    const [x, y] = buildMapJob(p, snapOf({ poi: pt }), "m1").layers[0]!.features[0]!.paths[0]!;
+    expect(x).toBeCloseTo(-30, 2); // 75 m at 1:2500
+    expect(y).toBeCloseTo(148.5, 2);
+    expect(buildMapJob(p, snapOf({ poi: pt }), "m1", { bleed: false }).layers).toEqual([]);
+  });
+
+  it("clips a feature beyond the margin at the margin, on both axes", () => {
+    const sq = mkDs("polygon", { type: "Polygon", coordinates: [[[499000, 199000], [501000, 199000], [501000, 201000], [499000, 201000], [499000, 199000]]] });
+    const job = buildMapJob(mkProject([500000, 200000]), snapOf({ buildings: sq }), "m1");
+    const ring = job.layers[0]!.features[0]!.paths[0]!;
+    const xs = ring.filter((_, i) => i % 2 === 0), ys = ring.filter((_, i) => i % 2 === 1);
+    const bx = job.bleedMm!.x, by = job.bleedMm!.y;
+    expect(Math.min(...xs)).toBeCloseTo(-bx, 1);
+    expect(Math.max(...xs)).toBeCloseTo(420 + bx, 1);
+    expect(Math.min(...ys)).toBeCloseTo(-by, 1);
+    expect(Math.max(...ys)).toBeCloseTo(297 + by, 1);
+  });
+
+  it("gives the context layers the margin too, but not the marker or the mask", () => {
+    const p = mkProject([500000, 200000], { marker: true, showContext: true });
+    p.locations[0]!.contextM = 100;
+    const pt = mkDs("point", { type: "Point", coordinates: [499400, 200000] });
+    const job = buildMapJob(p, snapOf({ poi: pt }), "m1");
+    expect(job.context!.layers[0]!.features[0]!.paths[0]![0]).toBeCloseTo(-30, 2);
+    expect(job.marker).toMatchObject({ x: 210, y: 148.5 });
+    expect(job.mask).toEqual(buildMapJob(p, snapOf({ poi: pt }), "m1", { bleed: false }).mask);
+  });
+
+  it("leaves the hash alone", () => {
+    const p = mkProject([500000, 200000]);
+    expect(buildMapJob(p, snapOf({}), "m1").hash).toBe(buildMapJob(p, snapOf({}), "m1", { bleed: false }).hash);
+  });
+});
+
 describe("locations in map jobs", () => {
   const parkland = JSON.parse(readFileSync(new URL("./fixtures/osm-parkland.json", import.meta.url), "utf8"));
   const HYDE: [number, number, number, number] = [-0.2, 51.47, -0.12, 51.53];
@@ -217,7 +286,7 @@ describe("locations in map jobs", () => {
 
     const { project, snap } = await loadProject(path);
     expect(mapStatusHash(project, "m1")).toBe(oldHash(v1 as never));
-    const job = buildMapJob(project, snap, "m1");
+    const job = buildMapJob(project, snap, "m1", { bleed: false });
     expect(job.hash).toBe(oldHash(v1 as never));
     expect(JSON.stringify(job)).toBe(goldenText);
     expect(Object.keys(job)).toEqual(["mapId", "mapName", "projectId", "sizeMm", "background", "layers", "marker", "hash"]);

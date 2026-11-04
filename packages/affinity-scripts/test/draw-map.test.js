@@ -68,6 +68,13 @@ describe("normaliseJob", () => {
     expect(dm.normaliseJob({ ...j, background: undefined }, plan).job.layers.map((l) => l.role)).toEqual(["water"]);
   });
 
+  it("spreads the background over the bleed margin when the job has one", () => {
+    const j = { ...job([]), sizeMm: { width: 420, height: 297 }, bleedMm: { x: 58.08, y: 41.07 }, background: { fill: "#ffffff" } };
+    const bg = dm.normaliseJob(j, plan).job.layers[0];
+    expect(bg.role).toBe("background");
+    expect(bg.features[0].paths).toEqual([[-58.08, -41.07, 478.08, -41.07, 478.08, 338.07, -58.08, 338.07]]);
+  });
+
   it("keeps the background below a layer with a negative order", () => {
     const j = { ...job([
       { role: "water", name: "Water", kind: "polygon", style: style({ order: -5 }), features: [{ fid: "w", name: "", paths: [[0, 0, 1, 0, 1, 1]], closed: true }] },

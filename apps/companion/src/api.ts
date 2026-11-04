@@ -289,7 +289,8 @@ export function createApi(deps: ApiDeps) {
         if (!session.current.maps.length) return [];
         return session.statuses(await listTargets(), location);
       }
-      if (n === 4 && a && b === "preview" && method === "GET") { session.map(a); return buildMapJob(session.current, session.data, a); }
+      // The thumbnail shows only the frame: no bleed margin (the send draws one).
+      if (n === 4 && a && b === "preview" && method === "GET") { session.map(a); return buildMapJob(session.current, session.data, a, { bleed: false }); }
       if (n === 4 && a && b === "link" && method === "POST") {
         const map = session.map(a);
         const docId = requireString(body, "docId");

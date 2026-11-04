@@ -43,6 +43,8 @@ export interface MapLayerJob { role: RoleId; name: string; kind: GeometryKind; s
  * consumers are unchanged; draw-map.js turns it into one more polygon layer below them all.
  */
 export interface MapJob { mapId: string; mapName: string; projectId: string; sizeMm: { width: number; height: number };
+  /** The bleed margin per side in mm (frame-local); absent on a { bleed: false } job. Layers reach this far past the frame. */
+  bleedMm?: { x: number; y: number };
   background: { fill: string };
   layers: MapLayerJob[]; marker: { x: number; y: number; style: MarkerStyle } | null; hash: string;
   /** Present only for a shape location or a box with a margin: the location outline in frame-local mm, unclipped. */

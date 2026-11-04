@@ -1,4 +1,4 @@
-// Turns project data into page geometry for one map: project -> rotate -> clip to the frame -> millimetres.
+// Turns project data into page geometry for one map: project -> rotate -> clip to the frame (plus its bleed) -> millimetres.
 import proj4 from "proj4";
 import { clipPolygon, clipPolyline } from "lineclip";
 import type { ClipBox, ClipPoint } from "lineclip";
@@ -101,7 +101,24 @@ function clipGeometry(g: Geometry, box: ClipBox): Geometry | null {
   }
 }
 
-export function buildMapJob(project: Project, snap: ProjectSnapshot, mapId: string): MapJob {
+/**
+ * The bleed margin per side, as a fraction of the frame's own width or height, for a map at 1:scale.
+ * Detailed maps (1:500 and closer) get the most (0.20), wide-area maps (1:25,000 and further) the least (0.05),
+ * log-interpolated between.
+ */
+export function bleedFraction(scale: number): number {
+  const MAX = 0.2, MIN = 0.05, NEAR = 500, FAR = 25000;
+  if (scale <= NEAR) return MAX;
+  if (scale >= FAR) return MIN;
+  return MAX + (MIN - MAX) * Math.log(scale / NEAR) / Math.log(FAR / NEAR);
+}
+
+/**
+ * The map's page geometry. With bleed (the default) every data layer and the context are clipped to the frame plus a
+ * margin on each side (job.bleedMm), so an artboard enlarged in Affinity already has map under it; coordinates in the
+ * margin go negative or past width/height. { bleed: false } gives the frame-only job (previews, the 0.1.x golden).
+ */
+export function buildMapJob(project: Project, snap: ProjectSnapshot, mapId: string, opts: { bleed?: boolean } = {}): MapJob {
   const map = findMap(project, mapId);
   const data = dataFor(project, snap, map.locationId);
   const proj = areaProjection(project);
@@ -127,7 +144,16 @@ export function buildMapJob(project: Project, snap: ProjectSnapshot, mapId: stri
   const box: ClipBox = [cx - halfW, cy - halfH, cx + halfW, cy + halfH];
   const t: FrameTransform = { scale: 1000 / map.scale, tx: (-box[0] * 1000) / map.scale, ty: (box[3] * 1000) / map.scale };
 
-  // One layer per visible role that has geometry inside the frame; shared by the main layers and the context.
+  // The clip box: the frame plus the bleed margin (mm on the page -> metres on the ground). The transform stays on
+  // the frame, so the frame's top-left is still (0, 0) mm.
+  const bleed = opts.bleed !== false;
+  const f = bleedFraction(map.scale);
+  const bleedMm = bleed ? { x: r2(f * width), y: r2(f * height) } : { x: 0, y: 0 };
+  const bx = (bleedMm.x / 1000) * map.scale;
+  const by = (bleedMm.y / 1000) * map.scale;
+  const clip: ClipBox = [box[0] - bx, box[1] - by, box[2] + bx, box[3] + by];
+
+  // One layer per visible role that has geometry inside the clip box; shared by the main layers and the context.
   const buildLayers = (): MapLayerJob[] => {
     const layers: MapLayerJob[] = [];
     for (const role of ROLE_IDS) {
@@ -136,12 +162,12 @@ export function buildMapJob(project: Project, snap: ProjectSnapshot, mapId: stri
       if (!style.visible || !ds) continue;
       const projected = projectDataset(ds, proj);
       const features: GeoFeature[] = [];
-      for (const f of projected.features) {
-        const geometry = clipGeometry(mapGeometry(f.geometry, rotate), box);
-        if (geometry) features.push({ ...f, geometry });
+      for (const feat of projected.features) {
+        const geometry = clipGeometry(mapGeometry(feat.geometry, rotate), clip);
+        if (geometry) features.push({ ...feat, geometry });
       }
       if (!features.length) continue;
-      const layer: ProjectedLayer = { name: projected.name, kind: projected.kind, features, bbox: box };
+      const layer: ProjectedLayer = { name: projected.name, kind: projected.kind, features, bbox: clip };
       const job = buildLayerJob(role, layer, t, style);
       if (!job.features.length) continue;
       layers.push({ role, name: ROLE_LABELS[role], kind: job.kind, style, features: job.features });
@@ -165,6 +191,7 @@ export function buildMapJob(project: Project, snap: ProjectSnapshot, mapId: stri
 
   return {
     mapId: map.id, mapName: map.name, projectId: project.id, sizeMm: { ...map.sizeMm },
+    ...(bleed ? { bleedMm } : {}),
     background: { fill: project.style.paper }, layers, ...extras,
     marker: map.marker ? { x: width / 2, y: height / 2, style: project.style.marker } : null,
     hash: mapStatusHash(project, mapId),
