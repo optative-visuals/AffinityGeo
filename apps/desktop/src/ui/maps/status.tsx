@@ -1,10 +1,16 @@
 // Shared bits of the Maps screen: status badges, the target line, and map changes that refresh the project.
-import type { MapSpec } from "@affinitygeo/geo-core";
+import type { MapSpec, Project } from "@affinitygeo/geo-core";
+import { frameOutsideLocation } from "@affinitygeo/geo-core/view";
 import { api, type MapStatus, type TargetDocument } from "../api.js";
 import { getActions } from "../store.js";
 
 /** Shown for a map whose frame is partly outside its location's data (the inspector, and the Gallery dot's label). */
 export const OUTSIDE_WARNING = "Part of this map is outside its location's data.";
+
+/** True when part of the map's frame is outside its location's data: worked out here, from the project on screen. */
+export function isOutside(project: Project, map: MapSpec): boolean {
+  try { return frameOutsideLocation(project, map); } catch { return false; }
+}
 
 const TONES: Record<MapStatus, "grey" | "green" | "amber" | "red"> = {
   "Not sent": "grey",

@@ -21,8 +21,6 @@ export interface AppState {
   selectedLocationId: string | null;
   /** Server statuses by map id (last known; kept while Affinity is away). */
   statuses: Record<string, MapStatus>;
-  /** Map ids whose frame is partly outside their location's data (from the same reply as `statuses`). */
-  outside: Record<string, true>;
   /** Open Affinity documents and their artboards (last known). */
   targets: TargetDocument[];
   connection: Connection;
@@ -62,7 +60,7 @@ export const SCREEN_LABELS: Record<Screen, string> = { area: "Area", maps: "Maps
 
 function initialState(): AppState {
   return {
-    project: null, dirty: false, counts: null, selectedLocationId: null, statuses: {}, outside: {}, targets: [],
+    project: null, dirty: false, counts: null, selectedLocationId: null, statuses: {}, targets: [],
     connection: { connected: false, busy: false }, connectionChecked: false,
     screen: "maps", view: "map", selectedMapIds: [], preview: { status: "loading" },
   };
@@ -133,12 +131,8 @@ async function refreshStatuses(): Promise<void> {
       api.targets(),
     ]);
     const statuses: Record<string, MapStatus> = {};
-    const outside: Record<string, true> = {};
-    for (const s of list) {
-      statuses[s.mapId] = s.status;
-      if (s.outside) outside[s.mapId] = true;
-    }
-    setApp({ statuses, outside, targets: targets.documents });
+    for (const s of list) statuses[s.mapId] = s.status;
+    setApp({ statuses, targets: targets.documents });
   } catch (e) {
     if (isNotConnected(e)) return; // keep the last known statuses
     throw e;

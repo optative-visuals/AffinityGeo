@@ -6,7 +6,7 @@ import type { MapJob, MapSpec, Project, ProjectStyle } from "@affinitygeo/geo-co
 import { api } from "../api.js";
 import { paperColour } from "../map/draw.js";
 import { useApp } from "../store.js";
-import { OUTSIDE_WARNING, StatusBadge, badgeFor, targetLine } from "./status.js";
+import { OUTSIDE_WARNING, StatusBadge, badgeFor, isOutside, targetLine } from "./status.js";
 import { TargetPicker } from "./TargetPicker.js";
 
 const PT_MM = 25.4 / 72;
@@ -148,7 +148,7 @@ export interface GalleryProps {
 }
 
 export function Gallery({ onSelect }: GalleryProps) {
-  const { project, statuses, outside, targets, selectedMapIds } = useApp();
+  const { project, statuses, targets, selectedMapIds } = useApp();
   const [picking, setPicking] = useState<string | null>(null);
   if (!project) return null;
   if (!project.maps.length) {
@@ -166,7 +166,7 @@ export function Gallery({ onSelect }: GalleryProps) {
             <div className="gallery-card-text">
               <div className="gallery-card-name">
                 <span className="map-number">{i + 1}</span><strong>{m.name}</strong>
-                {outside[m.id] && <span className="outside-dot" role="img" aria-label={OUTSIDE_WARNING} title={OUTSIDE_WARNING} />}
+                {isOutside(project, m) && <span className="outside-dot" role="img" aria-label={OUTSIDE_WARNING} title={OUTSIDE_WARNING} />}
               </div>
               <div className="muted gallery-card-target">{targetLine(m, targets, project.id)}</div>
               <div className="gallery-card-foot">

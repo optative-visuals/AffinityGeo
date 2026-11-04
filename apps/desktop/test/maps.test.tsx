@@ -6,6 +6,7 @@ import { PRESETS, projector, type AreaSpec, type MapSpec, type ProjectStyle } fr
 import { ApiFail, api, type SendResult, type TargetDocument } from "../src/ui/api.js";
 import { MapsScreen } from "../src/ui/maps/MapsScreen.js";
 import { clearThumbCache } from "../src/ui/maps/Gallery.js";
+import { patchMap } from "../src/ui/maps/status.js";
 import { MAP_DELETED, NOT_CONNECTED, NOT_CONNECTED_REST, PROJECT_CHANGED, STILL_DRAWING, getSendState, resetSend } from "../src/ui/maps/SendSummary.js";
 import { App, handleCloseRequest } from "../src/ui/App.js";
 import { platform } from "../src/ui/platform.js";
@@ -750,14 +751,24 @@ describe("maps belong to a location", () => {
     expect(screen.getByText("Add surrounding context to this location on the Area screen first.")).toBeTruthy();
   });
 
-  it("a map partly outside its location's data is flagged in the inspector and the Gallery", async () => {
-    const fake = start([mk("m1", "Library"), mk("m2", "Lake")], { selectedMapIds: ["m1"] });
-    fake.statuses.mockResolvedValue([{ mapId: "m1", status: "Not sent", outside: true }, { mapId: "m2", status: "Not sent", outside: false }]);
-    await act(async () => { await getActions().refreshStatuses(); });
+  it("a map partly outside its location's data is flagged in the inspector and the Gallery, with Affinity disconnected", async () => {
+    // Library's frame hangs off the west edge of the location (and its 200 m margin); Lake's sits inside.
+    const fake = start([mk("m1", "Library", { centre: [-0.172, 51.51] }), mk("m2", "Lake")],
+      { selectedMapIds: ["m1"], connection: { connected: false, busy: false } });
+    fake.statuses.mockRejectedValue(new ApiFail(503, "not connected"));
     expect(screen.getByText("Part of this map is outside its location's data.")).toBeTruthy();
     act(() => { getActions().setView("gallery"); });
     await flush();
     expect(within(screen.getByRole("article", { name: "Library" })).getByLabelText("Part of this map is outside its location's data.")).toBeTruthy();
     expect(within(screen.getByRole("article", { name: "Lake" })).queryByLabelText("Part of this map is outside its location's data.")).toBeNull();
+    expect(fake.statuses).not.toHaveBeenCalled();
+  });
+
+  it("the outside warning updates as soon as a patch moves the map back in", async () => {
+    start([mk("m1", "Library", { centre: [-0.172, 51.51] })], { selectedMapIds: ["m1"] });
+    expect(screen.getByText("Part of this map is outside its location's data.")).toBeTruthy();
+    await act(async () => { await patchMap("m1", { centre: [-0.155, 51.51] }); });
+    await flush();
+    expect(screen.queryByText("Part of this map is outside its location's data.")).toBeNull();
   });
 });

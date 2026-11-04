@@ -10,7 +10,7 @@ import { PinIcon } from "../shell/icons.js";
 import { toast } from "../shell/Toast.js";
 import { getActions, registerPendingEdit, useApp } from "../store.js";
 import { PAPER, fmtMm, isLandscape, paperFor, paperSize, sizeLabel, upLabel, type PaperId } from "./sizes.js";
-import { OUTSIDE_WARNING, patchMap } from "./status.js";
+import { OUTSIDE_WARNING, isOutside, patchMap } from "./status.js";
 import { TargetPicker } from "./TargetPicker.js";
 
 /** The slider waits this long after the last move before it saves. */
@@ -77,14 +77,14 @@ function ScaleControl({ map }: { map: MapSpec }) {
 /** The map's location (named when there are several), its context checkbox, and the outside warning. */
 function LocationControls({ map }: { map: MapSpec }) {
   const contextId = useId();
-  const { project, outside } = useApp();
+  const { project } = useApp();
   const locations = project?.locations ?? [];
   const location = locations.find((l) => l.id === map.locationId);
   // A box drawn with no margin has nothing around it to fade in.
   const noContext = location?.kind === "box" && location.contextM === 0;
   return (
     <>
-      {outside[map.id] && <span className="help help-warn">{OUTSIDE_WARNING}</span>}
+      {project && isOutside(project, map) && <span className="help help-warn">{OUTSIDE_WARNING}</span>}
       {locations.length > 1 && (
         <div className="field">
           <span className="field-label">Location</span>
