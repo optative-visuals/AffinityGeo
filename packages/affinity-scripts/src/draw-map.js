@@ -917,6 +917,14 @@ function sendMap(documents, payload, deps) {
     else if (!ctxGroup && r === CONTEXT_ROLE) ctxGroup = c;
   }
   if (location) mask = enclosures(location).filter(function (c) { return tagOf(c, 'geo:fid') === MASK_ID; })[0] || null;
+  // A tagged mask left in the frame group's Main list (a send that failed half-way) is taken back
+  // and put into the Location group's Enclosure list below. One holding children is the earlier
+  // clip layout: left alone.
+  let strayMask = null;
+  if (!mask) {
+    strayMask = children(group).filter(function (c) { return tagOf(c, 'geo:fid') === MASK_ID && !children(c).length; })[0] || null;
+    mask = strayMask;
+  }
   const wantRing = raw.mask && Array.isArray(raw.mask.ring) && raw.mask.ring.length >= 3
     ? raw.mask.ring.map(function (pt) { return [round2(pt[0]), round2(pt[1])]; }) : null;
   const ringPage = function () { return drawMapping.toPage([[].concat.apply([], wantRing)]); };
@@ -975,15 +983,33 @@ function sendMap(documents, payload, deps) {
   // A new mask is one curve with a solid fill (never drawn; with none it hides everything) and no
   // stroke. The Location group is made for it above the context (or the background), and every
   // data layer of the frame moves into it; then the curve moves into its Enclosure list.
+  // The commands that put a mask curve into the Location group's Enclosure list, making the group
+  // (tagged, above the context or the background, holding the frame's data layers) when needed.
+  const intoLocation = function (curve, madeLocation, tags, cmds) {
+    if (madeLocation) {
+      tags.push(setTag(doc, location, 'geo:role', LOCATION_ROLE));
+      cmds.push(move(location, ctxGroup || backgroundLayer() || outline, s.NodeMoveType.After));
+    }
+    const layers = children(group).filter(isDataLayer);
+    if (layers.length) cmds.push(move(layers, location, s.NodeMoveType.Inside));
+    if (curve) cmds.push(move(curve, location, s.NodeMoveType.Inside, s.C.NodeChildType.Enclosure));
+  };
   if (maskAction === 'remove') {
-    const inside = children(location);
-    const ours = inside.filter(function (c) { return tagOf(c, 'geo:role') != null || tagOf(c, 'geo:fid') != null; });
     const cmds = [];
-    if (ours.length) cmds.push(move(ours, location, s.NodeMoveType.Before));
-    cmds.push(s.C.DocumentCommand.createDeleteSelection(sel(doc, ours.length === inside.length ? location : mask)));
+    const doomed = [];
+    let groupGoes = false;
+    if (location) {
+      const inside = children(location);
+      const ours = inside.filter(function (c) { return tagOf(c, 'geo:role') != null || tagOf(c, 'geo:fid') != null; });
+      if (ours.length) cmds.push(move(ours, location, s.NodeMoveType.Before));
+      groupGoes = ours.length === inside.length;
+      if (groupGoes) doomed.push(location);
+    }
+    if (!groupGoes || strayMask) doomed.push(mask); // the group takes its own mask with it
+    cmds.push(s.C.DocumentCommand.createDeleteSelection(sel(doc, doomed)));
     run(doc, cmds);
     mask = null;
-    if (ours.length === inside.length) location = null;
+    if (groupGoes) location = null;
   } else if (maskAction === 'create') {
     const madeLocation = !location;
     if (madeLocation) location = addContainer(doc, group, LOCATION_NAME);
@@ -999,20 +1025,35 @@ function sendMap(documents, payload, deps) {
     let fromCmd = [];
     try { fromCmd = cmd.newNodes ? [...cmd.newNodes] : []; } catch (e) { fromCmd = []; }
     mask = plan.pickCreatedNodes(children(group).slice(before), fromCmd, [MASK_NAME], function (n) { return n.userDescription; }).nodes[0] || null;
-    // Tagged with the mask's tags in one compound: never an untagged Location group.
-    const tags = madeLocation ? [setTag(doc, location, 'geo:role', LOCATION_ROLE)] : [];
+    // The tags and the moves go in one compound. If it fails, the new curve (a black shape on top
+    // of the map) and a new, still empty Location group are deleted again; only if that fails too
+    // are they tagged, so the next send finds them (a stray mask is taken back, see above).
+    const tags = [];
     const cmds = [];
-    if (madeLocation) cmds.push(move(location, ctxGroup || backgroundLayer() || outline, s.NodeMoveType.After));
-    const layers = children(group).filter(isDataLayer);
-    if (layers.length) cmds.push(move(layers, location, s.NodeMoveType.Inside));
     if (mask) {
       tags.push(setTag(doc, mask, 'geo:role', MASK_ROLE), setTag(doc, mask, 'geo:fid', MASK_ID),
         setTag(doc, mask, 'geo:sent', JSON.stringify({ ring: wantRing })));
-      cmds.push(move(mask, location, s.NodeMoveType.Inside, s.C.NodeChildType.Enclosure));
-      created.push(MASK_ID);
     } else {
       warnings.push("AffinityGeo couldn't find the location mask after adding it, so the map isn't masked. Send the map again to retry.");
     }
+    intoLocation(mask, madeLocation, tags, cmds);
+    try {
+      run(doc, tags.concat(cmds));
+    } catch (e) {
+      const fresh = [mask, madeLocation ? location : null].filter(function (n) { return !!n; });
+      try {
+        if (fresh.length) doc.executeCommand(s.C.DocumentCommand.createDeleteSelection(sel(doc, fresh)));
+      } catch (e2) { try { run(doc, tags); } catch (e3) { /* ignore */ } }
+      throw e;
+    }
+    if (mask) created.push(MASK_ID);
+  } else if (strayMask) {
+    // Kept or reshaped: back into the Location group's Enclosure list first (it keeps its place on the page).
+    const madeLocation = !location;
+    if (madeLocation) location = addContainer(doc, group, LOCATION_NAME);
+    const tags = [];
+    const cmds = [];
+    intoLocation(strayMask, madeLocation, tags, cmds);
     try { run(doc, tags.concat(cmds)); } catch (e) { try { run(doc, tags); } catch (e2) { /* ignore */ } throw e; }
   }
 
@@ -1034,7 +1075,7 @@ function sendMap(documents, payload, deps) {
   if (ctxGroup) scan(ctxGroup, 'context');
   const parentFor = function (role) {
     if (role.indexOf(CONTEXT_PREFIX) === 0) return 'context';
-    if (role === BACKGROUND_ROLE || role === MARKER_ROLE || !location) return 'group';
+    if (role === BACKGROUND_ROLE || role === MARKER_ROLE || !location || !wantRing) return 'group';
     return 'location';
   };
   const nodeFor = function (key) { return key === 'location' ? location : key === 'context' ? ctxGroup : group; };

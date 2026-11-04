@@ -1012,6 +1012,49 @@ describe("locations: the mask and the surrounding context", () => {
     expect(names(group())).toEqual(["Frame", "Background", "Water", "Buildings", "Location", "You are here"]);
   });
 
+  it("a failed mask send leaves no black curve on the map, and the next send makes exactly one mask", () => {
+    const p = shaped();
+    fake.hooks.failCompound = (cmds) => cmds.some((c) => c.label === "move:enclosure");
+    expect(() => send(jobFor(p))).toThrow("Fake: compound failed");
+    fake.hooks.failCompound = null;
+    expect(mask()).toBeUndefined();
+    expect(doc.allNodes().filter((n) => n.userDescription === "Location mask")).toEqual([]);
+    expect(loc()).toBeUndefined();
+    const r = send(jobFor(p));
+    expect(doc.allNodes().filter((n) => n.userDescription === "Location mask")).toHaveLength(1);
+    expect(loc().encl).toEqual([mask()]);
+    expect(names(group())).toEqual(["Frame", "Background", "Location", "You are here"]);
+    expect(names(loc())).toEqual(["Water", "Buildings"]);
+    expect(send(jobFor(p), { sentIds: r.objectIds })).toMatchObject({ ...quiet, warnings: [] });
+  });
+
+  it("a tagged mask left in the frame group's Main list is put back in the Location group's Enclosure list", () => {
+    const p = shaped();
+    const first = send(jobFor(p));
+    const m = mask();
+    loc().encl.splice(0, 1);
+    group().kids.push(m);
+    m.parent = group();
+    const r = send(jobFor(p), { sentIds: first.objectIds });
+    expect(r).toMatchObject({ ...quiet, warnings: [] });
+    expect(loc().encl).toEqual([m]);
+    expect(group().kids).not.toContain(m);
+    expect(objects().filter((n) => n.tags.get("geo:fid") === "mask:shape")).toEqual([m]);
+  });
+
+  it("without a mask in the job, a new role container goes in the frame group, not a kept Location group", () => {
+    const p = shaped();
+    const first = send(jobFor(p));
+    const note = new FakeNode("curve", "My note"); // keeps the Location group
+    loc().kids.push(note);
+    note.parent = loc();
+    doc.remove(byName("Water")); // the designer deleted a whole layer
+    Object.assign(p.locations[0], { kind: "box", contextM: 0 });
+    send(jobFor(p), { sentIds: first.objectIds, reset: true });
+    expect(loc().kids).toEqual([note]);
+    expect(names(group())).toEqual(["Frame", "Background", "Water", "Buildings", "Location", "You are here"]);
+  });
+
   it("a frame with the earlier clip layout (layers inside the mask curve) re-sends without failing", () => {
     const p = shaped();
     const first = send(jobFor(p));

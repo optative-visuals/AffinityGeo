@@ -231,7 +231,7 @@ function fakeSdk() {
       // Before / After: next to target in its child list; Inside: on top of target's own children
       // (its Main list, or its Enclosure list with NodeChildType.Enclosure).
       // A moved node keeps its spread position (its transform is rebased on the new parent).
-      createMoveNodes: (s, target, type, childType) => command('move', () => s.nodes.forEach((n) => {
+      createMoveNodes: (s, target, type, childType) => command(childType === 'enclosure' ? 'move:enclosure' : 'move', () => s.nodes.forEach((n) => {
         const spread = n.baseToSpreadTransform;
         const from = siblingsOf(n);
         from.splice(from.indexOf(n), 1);
