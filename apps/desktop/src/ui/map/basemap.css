@@ -1,0 +1,17 @@
+/* The street basemap and its overlay layer. */
+.basemap { position: absolute; inset: 0; overflow: hidden; background: var(--canvas); }
+.basemap-map { position: absolute; inset: 0; }
+.basemap--offline .basemap-map { display: none; }
+.basemap-overlay { position: absolute; inset: 0; pointer-events: none; }
+.basemap-overlay > * { pointer-events: auto; }
+.basemap-note {
+  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
+  padding: 4px 10px; border-radius: 6px; font-size: 12px;
+  color: var(--text); background: var(--panel); border: 1px solid var(--border);
+}
+
+/* Dim the light Positron tiles when the UI is dark: forced by data-theme, or by the OS when it is on System. */
+:root[data-theme="dark"] .basemap--dim .maplibregl-canvas { filter: brightness(0.62) contrast(1.05); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .basemap--dim .maplibregl-canvas { filter: brightness(0.62) contrast(1.05); }
+}
