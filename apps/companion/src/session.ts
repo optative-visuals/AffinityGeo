@@ -1,7 +1,7 @@
 // The one open project: its file, its data snapshot and whether it has unsaved changes.
 import { randomBytes } from "node:crypto";
 import {
-  CONTEXT_DEFAULT_M, CONTEXT_MAX_M, DataError, PROJECTIONS, ROLE_IDS, TOO_BIG, boxRing, dataFor, fetchAreaFor, fetchKm2, fetchRing,
+  CONTEXT_DEFAULT_M, CONTEXT_MAX_M, CONTEXT_STEP_M, DataError, PROJECTIONS, ROLE_IDS, TOO_BIG, boxRing, dataFor, fetchAreaFor, fetchKm2, fetchRing,
   fetchOsm as realFetchOsm, getProjection, loadProject, mapStatusHash, newProject, parseFilter, projectDataset, projector, readDataset,
   ringBbox, saveProject, setRoleSource, simplifyLayerToTolerance, styleFromPreset, suggestProjection, syncArea, utmParams, validateRing,
   type AreaSpec, type Bbox, type Dataset, type FetchArea, type GeometryKind, type LocationSpec, type Position, type MapSpec, type MapTarget,
@@ -186,7 +186,9 @@ function checkRing(v: unknown): Ring {
 }
 
 function checkContext(v: unknown): number {
-  if (!isNum(v) || v < 0 || v > CONTEXT_MAX_M) throw bad(`The margin must be from 0 to ${CONTEXT_MAX_M.toLocaleString("en-GB")} metres.`);
+  if (!isNum(v) || v < 0 || v > CONTEXT_MAX_M || v % CONTEXT_STEP_M !== 0) {
+    throw bad(`The margin must be from 0 to ${CONTEXT_MAX_M.toLocaleString("en-GB")} metres, in steps of ${CONTEXT_STEP_M}.`);
+  }
   return v;
 }
 
@@ -527,6 +529,8 @@ export class ProjectSession {
     // Keep the same project object (in-flight sends look it up by identity).
     Object.assign(this.current, next.project);
     this.current.dataVersion += 1;
+    // A file layer is shared by every location, and a map's send hash reads its location's dataVersion.
+    for (const loc of this.current.locations) loc.dataVersion += 1;
     this.sourceEpoch += 1;
     this.data = next.snap;
     this.changed();

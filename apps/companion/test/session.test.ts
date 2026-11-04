@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { TOO_BIG, boxRing, fetchOsm, fetchRing, parseOverpass, readZip, type Bbox, type FetchArea, type Ring } from "@affinitygeo/geo-core";
+import {
+  TOO_BIG, boxRing, fetchOsm, fetchRing, fnv, parseOverpass, readZip, stable, styleHash, writeZip,
+  type Bbox, type FetchArea, type Project, type Ring,
+} from "@affinitygeo/geo-core";
 import { ApiError, ProjectSession, buildAreaPreview } from "../src/session.js";
 
 const PARKLAND: Bbox = [-0.1690, 51.5040, -0.1640, 51.5065];
@@ -380,7 +383,9 @@ describe("ProjectSession locations", () => {
     const big = err(() => s.create("X", { placeName: "", kind: "shape", ring: boxRing([-0.2, 51.48, -0.1264, 51.5258]), contextM: 0 }, "Light"));
     expect(big.message).toBe(TOO_BIG);
     const margin = err(() => s.create("X", { ...SHAPE_IN, contextM: 1001 }, "Light"));
-    expect(margin.message).toBe("The margin must be from 0 to 1,000 metres.");
+    expect(margin.message).toBe("The margin must be from 0 to 1,000 metres, in steps of 50.");
+    expect(err(() => s.create("X", { ...SHAPE_IN, contextM: 37 }, "Light")).message).toBe("The margin must be from 0 to 1,000 metres, in steps of 50.");
+    expect(new ProjectSession().create("X", { ...SHAPE_IN, contextM: 1000 }, "Light").project.locations[0]!.contextM).toBe(1000);
     expect(err(() => s.create("X", { ...SHAPE_IN, kind: "circle" as any }, "Light")).status).toBe(400);
     expect(err(() => s.create("X", { ...SHAPE_IN, ring: [[1, 2]] }, "Light")).status).toBe(400);
     expect(s.project).toBeNull();
@@ -427,7 +432,7 @@ describe("ProjectSession locations", () => {
     expect(loc).toMatchObject({ name: "East", contextM: 100, kind: "box" });
     expect(s.project!.area.bboxWgs84[2]).toBeGreaterThan(-0.1540);
     expect(s.patchLocation("loc-1", { kind: "shape", ring: SHAPE }).kind).toBe("shape");
-    expect(err(() => s.patchLocation("loc-2", { contextM: -50 })).message).toBe("The margin must be from 0 to 1,000 metres.");
+    expect(err(() => s.patchLocation("loc-2", { contextM: -50 })).message).toBe("The margin must be from 0 to 1,000 metres, in steps of 50.");
     expect(err(() => s.patchLocation("loc-2", { name: "" })).status).toBe(400);
     expect(err(() => s.patchLocation("loc-2", { dataVersion: 4 } as any)).status).toBe(400);
     expect(err(() => s.patchLocation("nope", { name: "x" })).status).toBe(404);
@@ -519,6 +524,53 @@ describe("ProjectSession locations", () => {
     expect(new Set(fids).size).toBe(fids.length);
     s.patchLocation("loc-2", { name: "Renamed" });
     expect(s.areaPreview().locations[1]!.name).toBe("Renamed"); // the cache follows location changes
+  });
+
+  it("re-importing the same file with new contents marks every location's sent maps changed", async () => {
+    const s = new ProjectSession({ fetchOsm: okOsm });
+    const { project } = s.create("Parkland", AREA, "Light");
+    s.addLocation({ kind: "box", ring: EAST, contextM: 0 });
+    const file = join(dir, "landmarks.geojson");
+    const point = (name: string) => JSON.stringify({ type: "FeatureCollection", features: [
+      { type: "Feature", properties: { name }, geometry: { type: "Point", coordinates: CENTRE } },
+    ] });
+    writeFileSync(file, point("Gate"));
+    await s.importFile(file, "landmarks");
+    const a = s.addMap({ name: "A", centre: CENTRE });
+    const b = s.addMap({ name: "B", centre: CENTRE, locationId: "loc-2" });
+    for (const m of [a, b]) s.recordSent(project.id, m.id, s.statusHash(m.id), { objectIds: [] });
+    expect(s.statuses({ documents: [] }).map((x) => x.status)).toEqual(["Up to date", "Up to date"]);
+    writeFileSync(file, point("Fountain"));
+    await s.importFile(file, "landmarks"); // the same path: only the contents changed
+    expect(s.statusOf({ documents: [] }, a.id)).toBe("Changed since sent");
+    expect(s.statusOf({ documents: [] }, b.id)).toBe("Changed since sent");
+  });
+
+  it("a map sent from 0.1.x stays up to date when its v1 project is opened", async () => {
+    // The 0.1.0 hash formula and project shape, copied so this test owns the old code.
+    const oldHash = (p: { maps: Array<Record<string, unknown>>; style: Project["style"]; dataVersion: number; sources: unknown; area: unknown }) => {
+      const { sent: _s, target: _t, ...spec } = p.maps[0]!;
+      return fnv(stable({ map: spec, style: styleHash(p.style), dataVersion: p.dataVersion, sources: p.sources, area: p.area }));
+    };
+    const base = new ProjectSession().create("Old", AREA, "Light").project;
+    const { locations: _l, ...rest } = base;
+    const v1Map: Record<string, unknown> = {
+      id: "m1", name: "Map 1", centre: CENTRE, scale: 5000, rotationDeg: -30, sizeMm: { width: 297, height: 210 },
+      marker: true, target: { docId: "doc-1", docTitle: "Parkland.af" }, resizeArtboard: false, sent: null,
+    };
+    const v1 = { ...rest, version: 1, maps: [v1Map], dataVersion: 7, fetchedAt: "2026-10-28T10:00:00Z" };
+    v1Map.sent = { at: "2026-10-28T11:00:00Z", hash: oldHash(v1), objectIds: ["paths:1"] };
+    const enc = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
+    const entries = [{ name: "project.json", data: enc(v1) }];
+    for (const [role, ds] of Object.entries(parseOverpass(OSM))) entries.push({ name: `data/${role}.json`, data: enc(ds) });
+    const path = join(dir, "v1.afgeo");
+    writeFileSync(path, writeZip(entries));
+
+    const s = new ProjectSession();
+    await s.open(path);
+    const targets = { documents: [{ docId: "doc-1", title: "Parkland.af", artboards: [] }] };
+    expect(s.statusOf(targets, "m1")).toBe("Up to date");
+    expect(s.statuses(targets)).toEqual([{ mapId: "m1", status: "Up to date", outside: expect.any(Boolean) }]);
   });
 
   it("saves and opens a project with two locations, without orphan data after a delete", async () => {
