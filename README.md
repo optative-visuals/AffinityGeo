@@ -5,6 +5,8 @@ AffinityGeo makes wayfinding maps for Affinity. You pick a place, choose a look,
 
 <!-- screenshot: the Maps screen -->
 
+A project can hold more than one location. Each location is a box or a custom shape, and you edit it over a street map, where you can add or remove corners. A location can also fetch a margin of surroundings (0 to 1000 m). Each map belongs to one location. In Affinity the map is masked to the location's shape, and **Show surrounding context** adds the surroundings, faded, as an editable group. Projects from version 0.1.x open unchanged as one box location.
+
 ## Install
 1. Download `AffinityGeo-Setup-<version>.exe` from the [Releases page](https://github.com/optative-visuals/AffinityGeo/releases) on GitHub and run it.
 2. Windows may say "Windows protected your PC". Choose **More info**, then **Run anyway**. This happens because the app isn't signed yet.
@@ -60,6 +62,7 @@ On Node below 24.15, the tests print a jsdom engine warning. It is harmless. Rel
 ## Licence and credits
 - GPL-3.0-or-later.
 - Map data © OpenStreetMap contributors (ODbL).
+- Street map tiles by OpenFreeMap, using © OpenStreetMap contributors.
 - Place search by Nominatim.
 - Portions adapted from CavalryGeo (GPL).
 - By Optative.
