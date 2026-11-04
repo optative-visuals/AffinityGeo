@@ -9,6 +9,7 @@ export { ROLE_IDS, ROLE_LABELS } from "./roles.js";
 export { PRESETS, PRESET_PAPER } from "./styles.js";
 export { suggestProjection, utmParams } from "../projections.js";
 export type { Bbox } from "../types.js";
+export * from "./location.js";
 export type { AreaSpec, MapSpec, ProjectStyle, RoleId } from "./types.js";
 
 export const MAX_KM2 = 25;

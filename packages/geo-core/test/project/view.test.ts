@@ -92,7 +92,7 @@ describe("view.ts stays browser-safe", () => {
     expect(text).not.toMatch(/require\(/);
   });
   it("imports only allowed modules", () => {
-    const allowed = new Set(["proj4", "./types.js", "./roles.js", "./styles.js", "../types.js", "../projections.js", "../crs.js"]);
+    const allowed = new Set(["proj4", "./types.js", "./roles.js", "./styles.js", "./location.js", "../types.js", "../projections.js", "../crs.js"]);
     const specs = [...text.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]!);
     for (const s of specs) expect(allowed.has(s), s).toBe(true);
   });
