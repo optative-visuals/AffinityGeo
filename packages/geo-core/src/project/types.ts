@@ -44,4 +44,8 @@ export interface MapLayerJob { role: RoleId; name: string; kind: GeometryKind; s
  */
 export interface MapJob { mapId: string; mapName: string; projectId: string; sizeMm: { width: number; height: number };
   background: { fill: string };
-  layers: MapLayerJob[]; marker: { x: number; y: number; style: MarkerStyle } | null; hash: string; }
+  layers: MapLayerJob[]; marker: { x: number; y: number; style: MarkerStyle } | null; hash: string;
+  /** Present only for a shape location or a box with a margin: the location outline in frame-local mm, unclipped. */
+  mask?: { ring: number[][] };
+  /** Present only when the map shows context: the same layers again, drawn faded outside the mask. */
+  context?: { opacity: 0.5; layers: MapLayerJob[] }; }

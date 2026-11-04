@@ -12,7 +12,8 @@ import { TOO_BIG } from "./osm.js";
 import { ROLE_IDS, ROLE_LABELS } from "./roles.js";
 import { fnv, stable, styleHash } from "./styles.js";
 import { dataFor } from "./file.js";
-import type { MapJob, MapLayerJob, MapSpec, Project, ProjectSnapshot } from "./types.js";
+import { ringBbox } from "./location.js";
+import type { MapJob, MapLayerJob, LocationSpec, MapSpec, Project, ProjectSnapshot } from "./types.js";
 
 function findMap(project: Project, mapId: string): MapSpec {
   const map = project.maps.find((m) => m.id === mapId);
@@ -24,13 +25,32 @@ function areaProjection(project: Project): ResolvedProjection {
   return getProjection(project.area.projectionId, project.area.projectionParams ?? {});
 }
 
+function findLocation(project: Project, map: MapSpec): LocationSpec {
+  const loc = project.locations.find((l) => l.id === map.locationId);
+  if (!loc) throw new Error("That map's location isn't in this project any more.");
+  return loc;
+}
+
+/** A legacy map (a plain box, no margin, no context) keeps the 0.1.x job and hash exactly. */
+export function isLegacyMap(project: Project, map: MapSpec): boolean {
+  const loc = findLocation(project, map);
+  return loc.kind === "box" && loc.contextM === 0 && !map.showContext;
+}
+
 /** The hash a sent map is compared against: everything that changes its drawing, nothing about where it was sent. */
 export function mapStatusHash(project: Project, mapId: string): string {
-  const { sent: _sent, target: _target, ...spec } = findMap(project, mapId);
-  return fnv(stable({
-    map: spec, style: styleHash(project.style), dataVersion: project.dataVersion,
-    sources: project.sources, area: project.area,
-  }));
+  const map = findMap(project, mapId);
+  const loc = findLocation(project, map);
+  const { sent: _sent, target: _target, locationId: _locationId, showContext, ...spec } = map;
+  const base = {
+    map: spec, style: styleHash(project.style), dataVersion: loc.dataVersion, sources: project.sources,
+    area: {
+      placeName: loc.placeName, bboxWgs84: ringBbox(loc.ring), projectionId: project.area.projectionId,
+      ...(project.area.projectionParams ? { projectionParams: project.area.projectionParams } : {}),
+    },
+  };
+  return fnv(stable(isLegacyMap(project, map) ? base
+    : { ...base, location: { kind: loc.kind, ring: loc.ring, contextM: loc.contextM, showContext } }));
 }
 
 type Xf = (p: Position) => Position;
@@ -106,27 +126,45 @@ export function buildMapJob(project: Project, snap: ProjectSnapshot, mapId: stri
   const box: ClipBox = [cx - halfW, cy - halfH, cx + halfW, cy + halfH];
   const t: FrameTransform = { scale: 1000 / map.scale, tx: (-box[0] * 1000) / map.scale, ty: (box[3] * 1000) / map.scale };
 
-  const layers: MapLayerJob[] = [];
-  for (const role of ROLE_IDS) {
-    const style = project.style.roles[role];
-    const ds = data[role];
-    if (!style.visible || !ds) continue;
-    const projected = projectDataset(ds, proj);
-    const features: GeoFeature[] = [];
-    for (const f of projected.features) {
-      const geometry = clipGeometry(mapGeometry(f.geometry, rotate), box);
-      if (geometry) features.push({ ...f, geometry });
+  // One layer per visible role that has geometry inside the frame; shared by the main layers and the context.
+  const buildLayers = (): MapLayerJob[] => {
+    const layers: MapLayerJob[] = [];
+    for (const role of ROLE_IDS) {
+      const style = project.style.roles[role];
+      const ds = data[role];
+      if (!style.visible || !ds) continue;
+      const projected = projectDataset(ds, proj);
+      const features: GeoFeature[] = [];
+      for (const f of projected.features) {
+        const geometry = clipGeometry(mapGeometry(f.geometry, rotate), box);
+        if (geometry) features.push({ ...f, geometry });
+      }
+      if (!features.length) continue;
+      const layer: ProjectedLayer = { name: projected.name, kind: projected.kind, features, bbox: box };
+      const job = buildLayerJob(role, layer, t, style);
+      if (!job.features.length) continue;
+      layers.push({ role, name: ROLE_LABELS[role], kind: job.kind, style, features: job.features });
     }
-    if (!features.length) continue;
-    const layer: ProjectedLayer = { name: projected.name, kind: projected.kind, features, bbox: box };
-    const job = buildLayerJob(role, layer, t, style);
-    if (!job.features.length) continue;
-    layers.push({ role, name: ROLE_LABELS[role], kind: job.kind, style, features: job.features });
+    return layers;
+  };
+  const layers = buildLayers();
+
+  // The location outline in frame-local mm: projected, rotated and scaled like the features, never clipped.
+  const extras: Pick<MapJob, "mask" | "context"> = {};
+  if (!isLegacyMap(project, map)) {
+    const loc = findLocation(project, map);
+    extras.mask = {
+      ring: loc.ring.map((pt) => {
+        const [x, y] = rotate(proj4(WGS84.proj4, dst.proj4, pt) as Position);
+        return [x * t.scale + t.tx, t.ty - y * t.scale];
+      }),
+    };
+    if (map.showContext) extras.context = { opacity: 0.5, layers: buildLayers() };
   }
 
   return {
     mapId: map.id, mapName: map.name, projectId: project.id, sizeMm: { ...map.sizeMm },
-    background: { fill: project.style.paper }, layers,
+    background: { fill: project.style.paper }, layers, ...extras,
     marker: map.marker ? { x: width / 2, y: height / 2, style: project.style.marker } : null,
     hash: mapStatusHash(project, mapId),
   };

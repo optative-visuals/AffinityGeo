@@ -7,7 +7,7 @@ import { boxRing } from "../../src/project/location.js";
 import { newProject } from "../../src/project/file.js";
 import { buildMapJob } from "../../src/project/mapjob.js";
 import {
-  SCALE_MAX, SCALE_MIN, areaKm2, mapFrameCorners, projector, scaleToSlider, sliderToScale,
+  SCALE_MAX, SCALE_MIN, areaKm2, frameOutsideLocation, mapFrameCorners, projector, scaleToSlider, sliderToScale,
 } from "../../src/project/view.js";
 import type { Dataset } from "../../src/types.js";
 import type { AreaSpec, MapSpec } from "../../src/project/types.js";
@@ -96,5 +96,21 @@ describe("view.ts stays browser-safe", () => {
     const allowed = new Set(["proj4", "./types.js", "./roles.js", "./styles.js", "./location.js", "../types.js", "../projections.js", "../crs.js"]);
     const specs = [...text.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]!);
     for (const s of specs) expect(allowed.has(s), s).toBe(true);
+  });
+});
+
+describe("frameOutsideLocation", () => {
+  const ring: [number, number][] = [[-0.2, 51.47], [-0.12, 51.47], [-0.12, 51.53], [-0.2, 51.53]];
+  const project = newProject("T", { placeName: "T", bboxWgs84: [-0.2, 51.47, -0.12, 51.53], projectionId: "bng" }, "Light",
+    { name: "T", placeName: "T", kind: "shape", ring, contextM: 0 });
+  const spec = (centre: [number, number]): MapSpec => ({
+    id: "m", name: "M", centre, locationId: "loc-1", showContext: false, scale: 2500, rotationDeg: 0,
+    sizeMm: { width: 100, height: 100 }, marker: false, target: null, resizeArtboard: null, sent: null,
+  });
+  it("is true for a frame centred on the ring's edge", () => {
+    expect(frameOutsideLocation(project, spec([-0.2, 51.5]))).toBe(true);
+  });
+  it("is false at the centroid with a small frame", () => {
+    expect(frameOutsideLocation(project, spec([-0.16, 51.5]))).toBe(false);
   });
 });

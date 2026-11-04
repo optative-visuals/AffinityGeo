@@ -1,11 +1,17 @@
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import proj4 from "proj4";
 import { readDataset } from "../../src/read/index.js";
 import { crsFromEpsg } from "../../src/crs.js";
 import { boxRing } from "../../src/project/location.js";
-import { newProject } from "../../src/project/file.js";
-import { buildMapJob, mapStatusHash } from "../../src/project/mapjob.js";
+import { loadProject, newProject } from "../../src/project/file.js";
+import { parseOverpass } from "../../src/project/osm.js";
+import { fnv, stable, styleHash } from "../../src/project/styles.js";
+import { writeZip } from "../../src/project/zip.js";
+import { buildMapJob, isLegacyMap, mapStatusHash } from "../../src/project/mapjob.js";
 import type { Dataset, Geometry } from "../../src/types.js";
 import type { MapSpec, Project, ProjectData, ProjectSnapshot } from "../../src/project/types.js";
 
@@ -152,7 +158,7 @@ describe("buildMapJob", () => {
     p.style.roles.water.fill = "#000000";
     const h1 = mapStatusHash(p, "m1");
     expect(h1).not.toBe(h0);
-    p.dataVersion++;
+    p.locations[0]!.dataVersion++;
     expect(mapStatusHash(p, "m1")).not.toBe(h1);
   });
 
@@ -171,5 +177,97 @@ describe("buildMapJob", () => {
     expect(mapStatusHash(mkProject(C, { scale: 5000 }), "m1")).not.toBe(base);
     expect(mapStatusHash(mkProject(C, { rotationDeg: 10 }), "m1")).not.toBe(base);
     expect(mapStatusHash(mkProject([C[0] + 50, C[1]]), "m1")).not.toBe(base);
+  });
+});
+
+describe("locations in map jobs", () => {
+  const parkland = JSON.parse(readFileSync(new URL("./fixtures/osm-parkland.json", import.meta.url), "utf8"));
+  const HYDE: [number, number, number, number] = [-0.2, 51.47, -0.12, 51.53];
+  const SHAPE: [number, number][] = [[-0.175, 51.5], [-0.16, 51.5], [-0.16, 51.51], [-0.17, 51.512]];
+  const shapeProject = (over: Partial<MapSpec> = {}, contextM = 0): Project => {
+    const p = mkProject(C, { centre: [-0.1665, 51.505], scale: 5000, ...over });
+    p.locations[0] = { ...p.locations[0]!, kind: "shape", ring: SHAPE, contextM };
+    p.area.projectionId = "bng";
+    return p;
+  };
+  const parkSnap = (): ProjectSnapshot => snapOf(parseOverpass(parkland));
+
+  it("legacy hash and job are unchanged for a migrated v1 project", async () => {
+    // The 0.1.0 formula, copied here so this test owns the old code.
+    const oldHash = (p: { maps: MapSpec[]; style: Project["style"]; dataVersion: number; sources: unknown; area: unknown }) => {
+      const { sent: _s, target: _t, locationId: _l, showContext: _c, ...spec } = p.maps[0]!;
+      return fnv(stable({ map: spec, style: styleHash(p.style), dataVersion: p.dataVersion, sources: p.sources, area: p.area }));
+    };
+    const base = newProject("Old", { placeName: "Hyde Park", bboxWgs84: HYDE, projectionId: "bng" }, "Light",
+      { name: "Hyde Park", placeName: "Hyde Park", kind: "box", ring: boxRing(HYDE), contextM: 0 });
+    const { locations: _loc, ...rest } = base;
+    const { locationId: _i, showContext: _s, ...v1Map } = {
+      id: "m1", name: "Map 1", centre: [-0.1665, 51.505], scale: 5000, rotationDeg: -30, sizeMm: { width: 297, height: 210 },
+      marker: true, target: null, resizeArtboard: null, sent: null, locationId: "x", showContext: false,
+    };
+    const v1 = { ...rest, version: 1, maps: [v1Map], dataVersion: 7, fetchedAt: "2026-10-28T10:00:00Z" };
+    const data = parseOverpass(parkland);
+    const entries = [{ name: "project.json", data: new TextEncoder().encode(JSON.stringify(v1)) }];
+    for (const [role, ds] of Object.entries(data)) entries.push({ name: `data/${role}.json`, data: new TextEncoder().encode(JSON.stringify(ds)) });
+    const path = join(mkdtempSync(join(tmpdir(), "afgeo-")), "v1.afgeo");
+    writeFileSync(path, writeZip(entries));
+
+    const { project, snap } = await loadProject(path);
+    expect(mapStatusHash(project, "m1")).toBe(oldHash(v1 as never));
+    const job = buildMapJob(project, snap, "m1");
+    expect(job.hash).toBe(oldHash(v1 as never));
+    expect(Object.keys(job)).toEqual(["mapId", "mapName", "projectId", "sizeMm", "background", "layers", "marker", "hash"]);
+    expect(JSON.stringify(job)).not.toMatch(/"mask"|"context"/);
+    expect(job.layers.length).toBeGreaterThan(0);
+  });
+
+  it("a shape location job has a mask ring in mm matching the frame transform", () => {
+    const p = shapeProject();
+    const job = buildMapJob(p, parkSnap(), "m1");
+    expect(job.mask!.ring).toHaveLength(SHAPE.length);
+    const LL = "+proj=longlat +datum=WGS84 +no_defs";
+    const [cx, cy] = proj4(LL, BNG.proj4, p.maps[0]!.centre) as [number, number];
+    const k = 1000 / 5000;
+    SHAPE.forEach((pt, i) => {
+      const [x, y] = proj4(LL, BNG.proj4, pt) as [number, number];
+      const [mx, my] = job.mask!.ring[i]!;
+      expect(mx).toBeCloseTo((x - (cx - 1050)) * k, 3); // 420 mm at 1:5000 is 2100 m wide
+      expect(my).toBeCloseTo((cy + 742.5 - y) * k, 3);  // 297 mm is 1485 m tall
+    });
+  });
+
+  it("mask ring is unclipped and follows rotation", () => {
+    const p = shapeProject({ rotationDeg: 90, scale: 500 });
+    const ring = buildMapJob(p, parkSnap(), "m1").mask!.ring;
+    expect(ring.some(([x, y]) => x < 0 || y < 0 || x > 420 || y > 297)).toBe(true);
+  });
+
+  it("context only when showContext", () => {
+    const p = shapeProject({}, 200);
+    const snap = parkSnap();
+    const off = buildMapJob(p, snap, "m1");
+    expect(off.mask).toBeDefined();
+    expect(off.context).toBeUndefined();
+    p.maps[0]!.showContext = true;
+    const on = buildMapJob(p, snap, "m1");
+    expect(on.context!.opacity).toBe(0.5);
+    expect(on.context!.layers).toEqual(on.layers);
+    expect(on.context!.layers.length).toBeGreaterThan(0);
+  });
+
+  it("hash changes when contextM or the ring changes (non-legacy)", () => {
+    const h0 = mapStatusHash(shapeProject(), "m1");
+    expect(mapStatusHash(shapeProject({}, 100), "m1")).not.toBe(h0);
+    const p = shapeProject();
+    p.locations[0]!.ring = [...SHAPE.slice(0, 3), [-0.172, 51.511]];
+    expect(mapStatusHash(p, "m1")).not.toBe(h0);
+    expect(mapStatusHash(shapeProject({ showContext: true }), "m1")).not.toBe(h0);
+  });
+
+  it("a box with context is not legacy and gets a mask", () => {
+    const p = mkProject(C);
+    p.locations[0]!.contextM = 100;
+    expect(isLegacyMap(p, p.maps[0]!)).toBe(false);
+    expect(buildMapJob(p, snapOf({}), "m1").mask).toBeDefined();
   });
 });
