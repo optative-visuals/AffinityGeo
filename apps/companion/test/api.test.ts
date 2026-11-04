@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { buildMapJob, fetchOsm, parseOverpass, PRESETS, ROLE_IDS, WGS84, type Bbox, type Dataset } from "@affinitygeo/geo-core";
+import { boxRing, buildMapJob, fetchOsm, fetchRing, parseOverpass, PRESETS, ROLE_IDS, WGS84, type Bbox, type Dataset, type FetchArea, type Ring } from "@affinitygeo/geo-core";
 import { startServer } from "../src/server.js";
 
 const PARKLAND: Bbox = [-0.1690, 51.5040, -0.1640, 51.5065];
@@ -18,6 +18,7 @@ let srv: Awaited<ReturnType<typeof startServer>>;
 let base: string;
 let osmMode: "ok" | "busy" = "ok";
 let places: string[] = [];
+let fetched: FetchArea[] = [];
 
 // ---- fake Affinity: one open document whose artboards the fake sendMap creates ----
 interface FakeArtboard { name: string; mapIds: Array<{ projectId: string; mapId: string }>; widthMm: number; heightMm: number }
@@ -110,11 +111,12 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "ageo-api-"));
   osmMode = "ok";
   places = [];
+  fetched = [];
   srv = await startServer({
     port: 0,
-    fetchOsm: (bbox: Bbox) => osmMode === "ok"
+    fetchOsm: (area: FetchArea) => { fetched.push(area); return osmMode === "ok"
       ? Promise.resolve(parseOverpass(OSM))
-      : fetchOsm(bbox, async () => new Response("", { status: 429 })),
+      : fetchOsm(area, async () => new Response("", { status: 429 })); },
     searchPlaces: async (q: string) => { places.push(q); return [{ name: "Hyde Park", bboxWgs84: PARKLAND, centre: CENTRE }]; },
   });
   base = `http://127.0.0.1:${srv.port}`;
@@ -313,7 +315,11 @@ describe("project API", () => {
     const wide = await post("/api/project/new", { name: "X", area: { placeName: "Europe", bboxWgs84: [-5, 45, 10, 50] }, preset: "Light" });
     expect(wide.status).toBe(400);
     expect(wide.body.error).toBe("That area is too big for a street-level map. Choose a smaller area.");
-    const big = await post("/api/project/new", { name: "X", area: { placeName: "London", bboxWgs84: [-0.25, 51.45, -0.10, 51.55] }, preset: "Light" });
+    // About 115 km²: refused when the project is made, not only when it is fetched.
+    const huge = await post("/api/project/new", { name: "X", area: { placeName: "London", bboxWgs84: [-0.25, 51.45, -0.10, 51.55] }, preset: "Light" });
+    expect(huge.body.error).toBe("That area is too big for a street-level map. Choose a smaller area.");
+    // About 12 km².
+    const big = await post("/api/project/new", { name: "X", area: { placeName: "London", bboxWgs84: [-0.19, 51.49, -0.14, 51.52] }, preset: "Light" });
     expect(big.status).toBe(200);
     expect(big.body.warning).toBe("This is a large area. Fetching may take a while and maps may be slow to draw.");
     const small = await post("/api/project/new", { name: "X", area: { placeName: "Parkland", bboxWgs84: PARKLAND }, preset: "Light" });
@@ -346,7 +352,8 @@ describe("project API", () => {
     expect(typeof bad.body.position).toBe("number");
 
     const src = await post("/api/data/source", { role: "buildings", source: { kind: "osm" } });
-    expect(src.body.counts.buildings).toBe(0);
+    // The location's OpenStreetMap buildings were kept while the file was used: they come straight back.
+    expect(src.body.counts.buildings).toBe(osmBuildings);
     await post("/api/data/refresh");
     expect((await get("/api/project")).body.counts.buildings).toBe(osmBuildings);
   });
@@ -364,6 +371,97 @@ describe("project API", () => {
     expect(pr.body.presetName).toBe("Dark");
     const t = await get("/api/targets");
     expect(t.body).toEqual({ documents: [{ docId: "doc-1", title: "Parkland.af", artboards: [] }] });
+  });
+});
+
+const SHAPE = [[-0.1685, 51.5042], [-0.1645, 51.5042], [-0.1642, 51.5055], [-0.1665, 51.5063], [-0.1688, 51.5055]];
+const EAST = boxRing([-0.1590, 51.5040, -0.1540, 51.5065]);
+
+describe("locations API", () => {
+  it("new project from a location body; the old area body still works", async () => {
+    const p = await post("/api/project/new", { name: "P", location: { placeName: "Parkland", kind: "shape", ring: SHAPE, contextM: 200 }, preset: "Light" });
+    expect(p.status).toBe(200);
+    expect(p.body.locations[0]).toMatchObject({ id: "loc-1", kind: "shape", ring: SHAPE, contextM: 200 });
+    const bow = await post("/api/project/new", { name: "P", location: { placeName: "", kind: "shape", ring: [[0, 0], [1, 1], [1, 0], [0, 1]] }, preset: "Light" });
+    expect(bow.status).toBe(400);
+    const old = await post("/api/project/new", { name: "P", area: { placeName: "Parkland", bboxWgs84: PARKLAND }, preset: "Light" });
+    expect(old.body.locations[0]).toMatchObject({ kind: "box", ring: boxRing(PARKLAND), contextM: 0 });
+  });
+
+  it("POST /api/locations needs X-Geo-App and JSON; the location round-trips", async () => {
+    await post("/api/project/new", { name: "P", area: { placeName: "Parkland", bboxWgs84: PARKLAND }, preset: "Light" });
+    const body = JSON.stringify({ name: "East", kind: "box", ring: EAST, contextM: 0 });
+    expect((await fetch(base + "/api/locations", { method: "POST", headers: { "Content-Type": "application/json" }, body })).status).toBe(403);
+    expect((await fetch(base + "/api/locations", { method: "POST", headers: APP, body })).status).toBe(415);
+    const r = await post("/api/locations", { name: "East", kind: "box", ring: EAST, contextM: 0 });
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ id: "loc-2", name: "East", placeName: "", kind: "box", ring: EAST, contextM: 0, dataVersion: 0, fetchedAt: null });
+    expect((await get("/api/project")).body.project.locations[1]).toEqual(r.body);
+    const far = await post("/api/locations", { kind: "box", ring: boxRing([8.40, 51.5040, 8.405, 51.5065]) });
+    expect(far.body.warning).toBe("This location is a long way from the others. Maps there may look stretched. Choose a projection that suits it on the Area screen.");
+  });
+
+  it("PATCH and DELETE /api/locations/:id", async () => {
+    await post("/api/project/new", { name: "P", area: { placeName: "Parkland", bboxWgs84: PARKLAND }, preset: "Light" });
+    await post("/api/locations", { kind: "box", ring: EAST, contextM: 0 });
+    const p = await patch("/api/locations/loc-2", { name: "East", contextM: 100 });
+    expect(p.status).toBe(200);
+    expect(p.body).toMatchObject({ id: "loc-2", name: "East", contextM: 100 });
+    expect((await patch("/api/locations/loc-2", { contextM: 5000 })).status).toBe(400);
+    expect((await patch("/api/locations/nope", { name: "x" })).status).toBe(404);
+    const m = (await post("/api/maps", { name: "East map", centre: CENTRE, locationId: "loc-2" })).body;
+    const refused = await del("/api/locations/loc-2");
+    expect(refused).toEqual({ status: 400, body: { error: "Delete this location's maps first." } });
+    await del(`/api/maps/${m.id}`);
+    expect((await del("/api/locations/loc-2")).body).toEqual({ ok: true });
+    expect((await del("/api/locations/loc-1")).body).toEqual({ error: "A project needs at least one location." });
+  });
+
+  it("refresh, counts, features and match per location", async () => {
+    await post("/api/project/new", { name: "P", area: { placeName: "Parkland", bboxWgs84: PARKLAND }, preset: "Light" });
+    await post("/api/locations", { kind: "shape", ring: SHAPE, contextM: 0 });
+    expect((await post("/api/data/refresh", { location: "loc-2" })).status).toBe(200);
+    expect(fetched).toEqual([{ ring: fetchRing({ kind: "shape", ring: SHAPE as Ring, contextM: 0 }) }]);
+    expect((await post("/api/data/refresh", { location: "nope" })).status).toBe(400);
+    expect((await get("/api/project")).body.counts.paths).toBe(0); // loc-1, the default, isn't fetched
+    const two = (await get("/api/project?location=loc-2")).body.counts;
+    expect(two.paths).toBeGreaterThan(0);
+    expect((await get("/api/data/paths/features?location=loc-2&limit=1000")).body.total).toBe(two.paths);
+    expect((await get("/api/data/paths/features")).body.total).toBe(0);
+    expect((await get("/api/data/paths/features?location=nope")).status).toBe(400);
+    const m = await get("/api/data/paths/match?location=loc-2&filter=" + encodeURIComponent("name contains 'a'"));
+    expect(m.body.fids.length).toBeGreaterThan(0);
+    expect((await get("/api/data/paths/match?filter=" + encodeURIComponent("name contains 'a'"))).body.fids).toEqual([]);
+    await post("/api/data/refresh");
+    expect(fetched[1]).toEqual({ bbox: PARKLAND });
+  });
+
+  it("maps: location id and showContext; statuses and sends flag a frame outside its location", async () => {
+    const { a } = await parklandWithTwoMaps();
+    expect(a).toMatchObject({ locationId: "loc-1", showContext: false });
+    expect((await post("/api/maps", { name: "X", centre: CENTRE, locationId: "nope" })).body.error).toBe("There's no location with that id in this project.");
+    expect((await patch(`/api/maps/${a.id}`, { locationId: "loc-1" })).status).toBe(400);
+    expect((await patch(`/api/maps/${a.id}`, { showContext: true })).body.showContext).toBe(true);
+    // A 1:2500 A3 frame is far bigger than the small park.
+    const st = (await get("/api/maps/status")).body;
+    expect(st[0]).toEqual({ mapId: a.id, status: "Not sent", outside: true });
+    const s = await post("/api/send", { mapIds: [a.id] });
+    expect(s.body.results[0]).toMatchObject({ mapId: a.id, ok: true, outside: true });
+    // A tiny frame fits inside.
+    await patch(`/api/maps/${a.id}`, { scale: 100, sizeMm: { width: 50, height: 50 } });
+    expect((await get("/api/maps/status")).body[0].outside).toBe(false);
+    const fit = await post("/api/send", { mapIds: [a.id] });
+    expect(fit.body.results[0].outside).toBeUndefined();
+  });
+
+  it("preview/area includes the location outlines", async () => {
+    await post("/api/project/new", { name: "P", area: { placeName: "Parkland", bboxWgs84: PARKLAND }, preset: "Light" });
+    await post("/api/data/refresh");
+    const r = await get("/api/preview/area");
+    expect(r.body.locations).toHaveLength(1);
+    expect(r.body.locations[0]).toMatchObject({ id: "loc-1", name: "Parkland" });
+    expect(r.body.locations[0].ring).toHaveLength(4);
+    expect(r.body.locations[0].ring[0][0]).toBeGreaterThan(400000); // British National Grid metres
   });
 });
 
@@ -496,7 +594,7 @@ describe("app window API", () => {
     await parklandWithTwoMaps();
     const pt = { type: "Point" as const, coordinates: [0, 0] as [number, number] };
     const mk = (fid: string, name: string, h: number | null) => ({ fid, name, geometry: pt, attrs: { h } });
-    srv.session.data.landmarks = DATASET([mk("a", "Alpha", 10), mk("b", "Bravo", 9), mk("c", "Charlie", null), mk("d", "Delta", 100), mk("e", "Echo", 9)]);
+    srv.session.data.locations["loc-1"]!.landmarks = DATASET([mk("a", "Alpha", 10), mk("b", "Bravo", 9), mk("c", "Charlie", null), mk("d", "Delta", 100), mk("e", "Echo", 9)]);
     const ids = async (qs: string) => (await get(`/api/data/landmarks/features?${qs}`)).body.rows.map((x: any) => x.fid);
     expect(await ids("sort=h&dir=asc")).toEqual(["b", "e", "a", "d", "c"]); // stable for ties
     expect(await ids("sort=h&dir=desc")).toEqual(["d", "a", "b", "e", "c"]);
