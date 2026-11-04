@@ -413,7 +413,7 @@ describe("Area screen", () => {
 
   describe("locations", () => {
     const two = () => ({
-      locations: [loc("loc-1", "Hyde Park"), loc("loc-2", "Green Park", { fetchedAt: null, ring: boxRing([-0.15, 51.50, -0.14, 51.51]) })],
+      locations: [loc("loc-1", "Hyde Park"), loc("loc-2", "Second park", { fetchedAt: null, ring: boxRing([-0.15, 51.50, -0.14, 51.51]) })],
       maps: [{ id: "m1", name: "M", locationId: "loc-1" }] as never,
     });
     const rowsList = () => screen.getByRole("list", { name: "Locations" });
@@ -433,7 +433,7 @@ describe("Area screen", () => {
       fireEvent.click(within(rows[1]!).getByRole("button"));
       await flushReal();
       expect(getApp().selectedLocationId).toBe("loc-2");
-      expect(nameField().value).toBe("Green Park");
+      expect(nameField().value).toBe("Second park");
     });
 
     it("Add location starts a box of about 0.5 km², and Save adds it and selects it", async () => {

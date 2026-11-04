@@ -242,11 +242,11 @@ describe("Data screen locations", () => {
   it("with two locations, the picker passes the chosen location to the table and Select by attribute", async () => {
     const fake = start();
     vi.spyOn(api, "project").mockImplementation(async () => ({ project: getApp().project, dirty: false, counts: getApp().counts }));
-    act(() => { setApp({ project: { ...getApp().project!, locations: [loc("loc-1", "Hyde Park"), loc("loc-2", "Green Park")] } as never }); });
+    act(() => { setApp({ project: { ...getApp().project!, locations: [loc("loc-1", "Hyde Park"), loc("loc-2", "Second park")] } as never }); });
     await flush();
     expect(fake.features).toHaveBeenLastCalledWith("buildings", expect.objectContaining({ location: "loc-1" }));
     const picker = screen.getByLabelText("Location") as HTMLSelectElement;
-    expect([...picker.options].map((o) => o.textContent)).toEqual(["Hyde Park", "Green Park"]);
+    expect([...picker.options].map((o) => o.textContent)).toEqual(["Hyde Park", "Second park"]);
     fireEvent.change(picker, { target: { value: "loc-2" } });
     await flush();
     expect(getApp().selectedLocationId).toBe("loc-2");
