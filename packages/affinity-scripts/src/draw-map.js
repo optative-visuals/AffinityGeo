@@ -18,8 +18,12 @@
 // A map of a shape location (job.mask) adds, between the Background and "You are here":
 //     ├ "Surrounding context"  geo:role "context" (only with job.context): opacity set when made, never again
 //     │  └ <role label>        geo:role "context-<roleId>", objects geo:fid "context-<roleId>:<fid>"
-//     └ "Location mask"        geo:role "mask", geo:fid "mask:shape", geo:sent {"ring"} (frame mm): a curve
-//        └ <role label>…       with no fill or stroke; the data role containers sit inside it (a vector mask)
+//     └ "Location"             geo:role "location": a group masked by a real Affinity mask
+//        ├ [Enclosure] "Location mask"  geo:role "mask", geo:fid "mask:shape", geo:sent {"ring"} (frame mm):
+//        │                     a curve with a solid black fill (never drawn; a mask without a fill hides
+//        │                     everything) and no stroke, in the group's Enclosure child list
+//        └ [Main] <role label>…  the data role containers
+// (A shape's own Main children would be a clip instead: moving the shape would move the map too.)
 'use strict';
 
 const OUTLINE_BACK = "The map's frame outline was missing, so AffinityGeo put it back.";
@@ -31,6 +35,8 @@ const BACKGROUND_NAME = 'Background';
 const MASK_ROLE = 'mask';
 const MASK_ID = 'mask:shape';
 const MASK_NAME = 'Location mask';
+const LOCATION_ROLE = 'location';
+const LOCATION_NAME = 'Location';
 const MASK_KEPT = 'You reshaped the location mask in Affinity, so it was kept.';
 const CONTEXT_ROLE = 'context';
 const CONTEXT_PREFIX = 'context-';
@@ -281,6 +287,14 @@ function list(collection) {
 }
 function children(node) {
   try { return node && node.children ? [...node.children] : []; } catch (e) { return []; }
+}
+
+/** A node's Enclosure child list (its mask, when it has one). */
+function enclosures(node) {
+  try {
+    const s = sdk();
+    return node ? [...new s.N.NodeChildren(node.handle, s.C.NodeChildType.Enclosure)] : [];
+  } catch (e) { return []; }
 }
 
 // The SDK gives a fresh wrapper on every children read: compare nodes with isSameNode.
@@ -640,11 +654,14 @@ function findOutline(group) {
 
 /**
  * All app objects under the frame group (in any container the designer moved them to). The
- * location mask isn't one of them: it is looked into (its children are the masked layers).
+ * Location group is looked into at no cost in depth (its Main children are the masked layers);
+ * its mask, in the Enclosure list, is never a map object. A mask curve holding the layers in its
+ * own Main list (the earlier clip layout) is looked into too.
  */
 function collectObjects(group, out, depth) {
   for (const c of children(group)) {
     const id = tagOf(c, 'geo:fid');
+    if (id == null && tagOf(c, 'geo:role') === LOCATION_ROLE) { collectObjects(c, out, depth); continue; }
     if (id === MASK_ID) { if (depth > 0) collectObjects(c, out, depth - 1); continue; }
     if (id != null) { out.push({ id: id, node: c }); continue; }
     if (depth > 0) collectObjects(c, out, depth - 1);
@@ -890,12 +907,16 @@ function sendMap(documents, payload, deps) {
     if (newLabel) { try { doc.executeCommand(s.C.DocumentCommand.createDeleteSelection(sel(doc, newLabel))); } catch (e) { /* ignore */ } }
   };
 
-  // The location mask and the "Surrounding context" group: direct children of the frame group.
-  let mask = null, ctxGroup = null;
+  // The "Location" group and the "Surrounding context" group: direct children of the frame group.
+  // The mask is the Location group's Enclosure child.
+  let location = null, mask = null, ctxGroup = null;
   for (const c of children(group)) {
-    if (!mask && tagOf(c, 'geo:fid') === MASK_ID) mask = c;
-    else if (!ctxGroup && tagOf(c, 'geo:role') === CONTEXT_ROLE && tagOf(c, 'geo:fid') == null) ctxGroup = c;
+    if (tagOf(c, 'geo:fid') != null) continue;
+    const r = tagOf(c, 'geo:role');
+    if (!location && r === LOCATION_ROLE) location = c;
+    else if (!ctxGroup && r === CONTEXT_ROLE) ctxGroup = c;
   }
+  if (location) mask = enclosures(location).filter(function (c) { return tagOf(c, 'geo:fid') === MASK_ID; })[0] || null;
   const wantRing = raw.mask && Array.isArray(raw.mask.ring) && raw.mask.ring.length >= 3
     ? raw.mask.ring.map(function (pt) { return [round2(pt[0]), round2(pt[1])]; }) : null;
   const ringPage = function () { return drawMapping.toPage([[].concat.apply([], wantRing)]); };
@@ -932,13 +953,13 @@ function sendMap(documents, payload, deps) {
     }
     ctxGroupGoes = allGo;
   }
-  const move = function (nodes, anchor, type) {
-    return s.C.DocumentCommand.createMoveNodes(sel(doc, nodes), anchor, type, s.C.NodeChildType.Main);
+  const move = function (nodes, anchor, type, childType) {
+    return s.C.DocumentCommand.createMoveNodes(sel(doc, nodes), anchor, type, childType || s.C.NodeChildType.Main);
   };
   const isDataLayer = function (c) {
     const r = tagOf(c, 'geo:role');
     return r != null && tagOf(c, 'geo:fid') == null && r !== BACKGROUND_ROLE && r !== MARKER_ROLE &&
-      r !== MASK_ROLE && r !== CONTEXT_ROLE && r.indexOf(CONTEXT_PREFIX) !== 0;
+      r !== MASK_ROLE && r !== LOCATION_ROLE && r !== CONTEXT_ROLE && r.indexOf(CONTEXT_PREFIX) !== 0;
   };
   const backgroundLayer = function () {
     return children(group).filter(function (c) { return tagOf(c, 'geo:role') === BACKGROUND_ROLE; })[0] || null;
@@ -947,21 +968,29 @@ function sendMap(documents, payload, deps) {
   const created = [];
   const removed = p.remove.slice();
   try {
-  // 5a. The mask. A mask the job no longer has goes, after its layers move back out where it was.
-  // A new one is one curve with no fill or stroke, above the context (or the background); then
-  // every data layer of the frame moves inside it, which clips them to it.
+  // 5a. The mask: a real Affinity mask, the curve in the Location group's Enclosure list (in its
+  // Main list it would be a clip, and moving it would move the map too).
+  // A mask the job no longer has goes: the layers move back out where the Location group was (in
+  // order), then the group goes with its mask; a group holding the designer's own objects stays.
+  // A new mask is one curve with a solid fill (never drawn; with none it hides everything) and no
+  // stroke. The Location group is made for it above the context (or the background), and every
+  // data layer of the frame moves into it; then the curve moves into its Enclosure list.
   if (maskAction === 'remove') {
-    const inside = children(mask);
+    const inside = children(location);
+    const ours = inside.filter(function (c) { return tagOf(c, 'geo:role') != null || tagOf(c, 'geo:fid') != null; });
     const cmds = [];
-    if (inside.length) cmds.push(move(inside, mask, s.NodeMoveType.Before));
-    cmds.push(s.C.DocumentCommand.createDeleteSelection(sel(doc, mask)));
+    if (ours.length) cmds.push(move(ours, location, s.NodeMoveType.Before));
+    cmds.push(s.C.DocumentCommand.createDeleteSelection(sel(doc, ours.length === inside.length ? location : mask)));
     run(doc, cmds);
     mask = null;
+    if (ours.length === inside.length) location = null;
   } else if (maskAction === 'create') {
+    const madeLocation = !location;
+    if (madeLocation) location = addContainer(doc, group, LOCATION_NAME);
     const b = s.C.AddChildNodesCommandBuilder.create();
     b.setInsertionTarget(group);
     const def = s.N.PolyCurveNodeDefinition.create(polyCurveFor(ringPage(), 'polygon', true, 0),
-      s.FillDescriptor.createNone(), s.FillDescriptor.createNone(), lineStyleDesc(0), opaque());
+      solid(0, 0, 0), s.FillDescriptor.createNone(), lineStyleDesc(0), opaque());
     def.setUserDescription(MASK_NAME);
     b.addPolyCurveNode(def);
     const before = children(group).length;
@@ -970,41 +999,45 @@ function sendMap(documents, payload, deps) {
     let fromCmd = [];
     try { fromCmd = cmd.newNodes ? [...cmd.newNodes] : []; } catch (e) { fromCmd = []; }
     mask = plan.pickCreatedNodes(children(group).slice(before), fromCmd, [MASK_NAME], function (n) { return n.userDescription; }).nodes[0] || null;
+    // Tagged with the mask's tags in one compound: never an untagged Location group.
+    const tags = madeLocation ? [setTag(doc, location, 'geo:role', LOCATION_ROLE)] : [];
+    const cmds = [];
+    if (madeLocation) cmds.push(move(location, ctxGroup || backgroundLayer() || outline, s.NodeMoveType.After));
+    const layers = children(group).filter(isDataLayer);
+    if (layers.length) cmds.push(move(layers, location, s.NodeMoveType.Inside));
     if (mask) {
-      const tags = [setTag(doc, mask, 'geo:role', MASK_ROLE), setTag(doc, mask, 'geo:fid', MASK_ID),
-        setTag(doc, mask, 'geo:sent', JSON.stringify({ ring: wantRing }))];
-      const cmds = tags.concat([move(mask, ctxGroup || backgroundLayer() || outline, s.NodeMoveType.After)]);
-      const layers = children(group).filter(isDataLayer);
-      if (layers.length) cmds.push(move(layers, mask, s.NodeMoveType.Inside));
-      try { run(doc, cmds); } catch (e) { try { run(doc, tags); } catch (e2) { /* ignore */ } throw e; }
+      tags.push(setTag(doc, mask, 'geo:role', MASK_ROLE), setTag(doc, mask, 'geo:fid', MASK_ID),
+        setTag(doc, mask, 'geo:sent', JSON.stringify({ ring: wantRing })));
+      cmds.push(move(mask, location, s.NodeMoveType.Inside, s.C.NodeChildType.Enclosure));
       created.push(MASK_ID);
     } else {
       warnings.push("AffinityGeo couldn't find the location mask after adding it, so the map isn't masked. Send the map again to retry.");
     }
+    try { run(doc, tags.concat(cmds)); } catch (e) { try { run(doc, tags); } catch (e2) { /* ignore */ } throw e; }
   }
 
   // 5b. Containers: one per role with something to create, in style.order; the marker group on top.
-  // The background and the marker sit in the frame group, the data layers in the mask (or the frame
-  // group when there's none), the context layers in the "Surrounding context" group.
+  // The background and the marker sit in the frame group, the data layers in the Location group (or
+  // the frame group when there's none), the context layers in the "Surrounding context" group.
   const containers = {};
-  const parentOf = {}; // role → 'group' | 'mask' | 'context'
+  const parentOf = {}; // role → 'group' | 'location' | 'context'
   const scan = function (node, key) {
     for (const c of children(node)) {
       const r = tagOf(c, 'geo:role');
-      if (r == null || r === MASK_ROLE || r === CONTEXT_ROLE || tagOf(c, 'geo:fid') != null || containers[r]) continue;
+      if (r == null || r === MASK_ROLE || r === LOCATION_ROLE || r === CONTEXT_ROLE || tagOf(c, 'geo:fid') != null || containers[r]) continue;
       containers[r] = c;
       parentOf[r] = key;
     }
   };
   scan(group, 'group');
-  if (mask) scan(mask, 'mask');
+  if (location) scan(location, 'location');
   if (ctxGroup) scan(ctxGroup, 'context');
   const parentFor = function (role) {
     if (role.indexOf(CONTEXT_PREFIX) === 0) return 'context';
-    if (role === BACKGROUND_ROLE || role === MARKER_ROLE || !mask) return 'group';
-    return 'mask';
+    if (role === BACKGROUND_ROLE || role === MARKER_ROLE || !location) return 'group';
+    return 'location';
   };
-  const nodeFor = function (key) { return key === 'mask' ? mask : key === 'context' ? ctxGroup : group; };
+  const nodeFor = function (key) { return key === 'location' ? location : key === 'context' ? ctxGroup : group; };
   const orderOf = function (role) {
     if (role === MARKER_ROLE) return Infinity;
     for (const l of job.layers) if (l.role === role) return l.style.order;
@@ -1025,7 +1058,7 @@ function sendMap(documents, payload, deps) {
   if (needed.length) {
     const cmds = [];
     const lowest = {}; // per parent: its bottom child before this send's containers were added
-    for (const key of ['group', 'mask', 'context']) {
+    for (const key of ['group', 'location', 'context']) {
       const roles = needed.filter(function (r) { return parentFor(r) === key; });
       if (!roles.length) continue;
       const parent = nodeFor(key);

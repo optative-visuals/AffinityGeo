@@ -7,6 +7,9 @@
 //  - a child added into a transformed group takes spread coordinates (Affinity gives it the
 //    inverse of the group's transform); createSetCurves writes base space.
 //  - any node (a curve too) can hold children: a group inside a curve is its vector mask's content;
+//  - every node has two child lists: Main (node.children) and Enclosure (node.enclosures, or
+//    new NodeChildren(node.handle, NodeChildType.Enclosure)): a shape in a group's Enclosure list is
+//    that group's mask; createMoveNodes Inside with NodeChildType.Enclosure puts a node there;
 //  - createMoveNodes Inside / Before / After keeps the moved node's spread position.
 // Hooks (fake.hooks) let tests make an AddChildNodes command or a compound command fail.
 // It is NOT a substitute for the MCP check.
@@ -90,11 +93,13 @@ function fillDesc(hex) {
 
 class FakeNode {
   constructor(kind, name) {
-    this.id = nextId++; this.kind = kind; this.userDescription = name || ''; this.tags = new Map(); this.kids = []; this.parent = null;
+    this.id = nextId++; this.kind = kind; this.userDescription = name || ''; this.tags = new Map(); this.kids = []; this.encl = []; this.parent = null;
     this.pc = null; this._text = undefined; this.textPx = null; this.font = null; this.charFills = null; this.unreadable = new Set(); this.fillHex = null; this.penHex = null; this.weight = 0; this.visible = true; this.box = null;
     this.xf = new Transform();
   }
   get children() { return this.kids.slice(); }
+  get enclosures() { return this.encl.slice(); }
+  get handle() { return this; }
   hasKey(k) { return this.tags.has(k); }
   getValueForKey(k) { if (!this.tags.has(k)) throw new Error('INVALID_ARGS'); return this.tags.get(k); }
   // Like Affinity: art text reports NoFill on the node; its colour lives in the story's glyph attributes.
@@ -135,6 +140,9 @@ class FakeNode {
   spreadCurve() { return this.pc.clone().transform(this.baseToSpreadTransform); }
 }
 
+/** The child list (Main or Enclosure) of its parent that holds node n. */
+function siblingsOf(n) { return n.parent.encl.includes(n) ? n.parent.encl : n.parent.kids; }
+
 function makeDoc(opts = {}) {
   const spreadKids = [];
   const doc = {
@@ -159,8 +167,8 @@ function makeDoc(opts = {}) {
     return n;
   }
   doc.addArtboard = addArtboard;
-  doc.allNodes = () => { const out = []; const walk = (ns) => ns.forEach((n) => { out.push(n); walk(n.kids); }); walk(spreadKids); return out; };
-  doc.remove = (node) => { const p = node.parent; if (p) p.kids.splice(p.kids.indexOf(node), 1); else spreadKids.splice(spreadKids.indexOf(node), 1); node.parent = null; };
+  doc.allNodes = () => { const out = []; const walk = (ns) => ns.forEach((n) => { out.push(n); walk(n.encl); walk(n.kids); }); walk(spreadKids); return out; };
+  doc.remove = (node) => { const p = node.parent; if (p) { const l = siblingsOf(node); l.splice(l.indexOf(node), 1); } else spreadKids.splice(spreadKids.indexOf(node), 1); node.parent = null; };
   return doc;
 }
 
@@ -170,7 +178,7 @@ function fakeSdk() {
   const hooks = { failAdd: null, failCompound: null, loseAdded: null };
   const opacityCalls = [];
   const C = {
-    NodeChildType: { Main: 'main' },
+    NodeChildType: { Main: 'main', Enclosure: 'enclosure' },
     AddChildNodesCommandBuilder: {
       create() {
         let target = null; const defs = [];
@@ -220,14 +228,16 @@ function fakeSdk() {
       createSetLineStyle: (s, ls) => command('weight', () => s.nodes.forEach((n) => { n.weight = ls.weight; })),
       createSetCurves: (ci, pc) => command('curves', () => { ci.node.pc = pc; }),
       createDeleteSelection: (s) => command('delete', () => s.nodes.forEach((n) => s.doc.remove(n))),
-      // Before / After: next to target among its siblings; Inside: on top of target's own children.
+      // Before / After: next to target in its child list; Inside: on top of target's own children
+      // (its Main list, or its Enclosure list with NodeChildType.Enclosure).
       // A moved node keeps its spread position (its transform is rebased on the new parent).
-      createMoveNodes: (s, target, type) => command('move', () => s.nodes.forEach((n) => {
+      createMoveNodes: (s, target, type, childType) => command('move', () => s.nodes.forEach((n) => {
         const spread = n.baseToSpreadTransform;
-        n.parent.kids.splice(n.parent.kids.indexOf(n), 1);
+        const from = siblingsOf(n);
+        from.splice(from.indexOf(n), 1);
         const p = type === 'Inside' ? target : target.parent;
-        if (type === 'Inside') p.kids.push(n);
-        else { const i = p.kids.indexOf(target); p.kids.splice(type === 'After' ? i + 1 : i, 0, n); }
+        if (type === 'Inside') (childType === 'enclosure' ? p.encl : p.kids).push(n);
+        else { const l = siblingsOf(target); const i = l.indexOf(target); l.splice(type === 'After' ? i + 1 : i, 0, n); }
         n.parent = p;
         n.xf = Transform.compose(p.baseToSpreadTransform.inverted, spread);
       })),
@@ -239,6 +249,11 @@ function fakeSdk() {
   };
 
   const N = {
+    // new NodeChildren(handle, childType): one child list of a node, as Affinity's nodes.js has it.
+    NodeChildren: class {
+      constructor(handle, childType) { this.nodes = (childType === 'enclosure' ? handle.encl : handle.kids).slice(); }
+      [Symbol.iterator]() { return this.nodes[Symbol.iterator](); }
+    },
     ContainerNodeDefinition: { createDefault: () => ({ kind: 'container', name: '', setUserDescription(d) { this.name = d; } }) },
     PolyCurveNodeDefinition: {
       create: (pc, fill, pen, ls, transparency) => {
