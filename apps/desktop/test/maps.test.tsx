@@ -739,7 +739,7 @@ describe("maps belong to a location", () => {
 
   it("ticking Show surrounding context patches showContext", async () => {
     const fake = start([mk("m1", "Library")], { selectedMapIds: ["m1"] });
-    expect(screen.getByText("Fades in the streets around the location. Hidden areas aren't sent to Affinity.")).toBeTruthy();
+    expect(screen.getByText("Fades in the streets around the location. When it's off, the surroundings aren't sent to Affinity.")).toBeTruthy();
     fireEvent.click(screen.getByLabelText("Show surrounding context"));
     await flush();
     expect(fake.patchMap).toHaveBeenCalledWith("m1", { showContext: true });
@@ -749,6 +749,16 @@ describe("maps belong to a location", () => {
     start([mk("m1", "Library")], { selectedMapIds: ["m1"] }, [loc("l1", "Hyde Park", { contextM: 0 })]);
     expect((screen.getByLabelText("Show surrounding context") as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByText("Add surrounding context to this location on the Area screen first.")).toBeTruthy();
+  });
+
+  it("a ticked context checkbox can still be unticked after the location's margin drops to 0", async () => {
+    const fake = start([mk("m1", "Library", { showContext: true })], { selectedMapIds: ["m1"] }, [loc("l1", "Hyde Park", { contextM: 0 })]);
+    const box = screen.getByLabelText("Show surrounding context") as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    expect(box.disabled).toBe(false);
+    fireEvent.click(box);
+    await flush();
+    expect(fake.patchMap).toHaveBeenCalledWith("m1", { showContext: false });
   });
 
   it("a map partly outside its location's data is flagged in the inspector and the Gallery, with Affinity disconnected", async () => {

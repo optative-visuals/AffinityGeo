@@ -80,7 +80,7 @@ function LocationControls({ map }: { map: MapSpec }) {
   const { project } = useApp();
   const locations = project?.locations ?? [];
   const location = locations.find((l) => l.id === map.locationId);
-  // A box drawn with no margin has nothing around it to fade in.
+  // A box drawn with no margin has nothing around it to fade in. A map that still shows it can turn it off.
   const noContext = location?.kind === "box" && location.contextM === 0;
   return (
     <>
@@ -93,14 +93,14 @@ function LocationControls({ map }: { map: MapSpec }) {
       )}
       <div className="field">
         <label className="check" htmlFor={contextId}>
-          <input id={contextId} type="checkbox" checked={map.showContext} disabled={noContext}
+          <input id={contextId} type="checkbox" checked={map.showContext} disabled={noContext && !map.showContext}
             onChange={(e) => { patchMap(map.id, { showContext: e.target.checked }).catch((err) => toast(message(err), "error")); }} />
           <span>Show surrounding context</span>
         </label>
         <span className="help">
           {noContext
             ? "Add surrounding context to this location on the Area screen first."
-            : "Fades in the streets around the location. Hidden areas aren't sent to Affinity."}
+            : "Fades in the streets around the location. When it's off, the surroundings aren't sent to Affinity."}
         </span>
       </div>
     </>
