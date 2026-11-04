@@ -7,7 +7,7 @@ import type { PlaceResult } from "@affinitygeo/geo-core";
 import {
   CONTEXT_DEFAULT_M, MAX_KM2, TOO_BIG, boxRing, fetchKm2, ringAreaKm2, ringBbox, type Ring,
 } from "@affinitygeo/geo-core/view";
-import { AreaEditor, initialArea, type AreaValue } from "../src/ui/area/AreaEditor.js";
+import { AreaEditor, formatKm2, initialArea, type AreaValue } from "../src/ui/area/AreaEditor.js";
 
 // The Basemap runs its offline fallback (a plain Web Mercator fit), so no real map is made.
 vi.mock("maplibre-gl", () => {
@@ -83,6 +83,27 @@ describe("AreaEditor", () => {
     expect(last.ring.length).toBeLessThanOrEqual(40);
     expect(last.ring.length).toBeGreaterThanOrEqual(3);
     expect(corners()).toHaveLength(last.ring.length);
+  });
+
+  it("disables Fit to place outline for a place too big to trace, and says why", () => {
+    const bbox: [number, number, number, number] = [-0.2, 51.46, -0.04, 51.54]; // about 97 km²
+    const ring = boxRing(bbox);
+    const big: PlaceResult = { name: "Big, London", centre: [-0.12, 51.5], bboxWgs84: bbox,
+      outline: { type: "Polygon", coordinates: [[...ring, ring[0]!]] } };
+    const start: AreaValue = { ...initialArea(big), contextM: 0 };
+    render(<Harness start={start} place={big} />);
+    const button = screen.getByRole("button", { name: "Fit to place outline" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(ringAreaKm2(ring)).toBeGreaterThan(90);
+    expect(screen.getByText(`This place is too big to trace as one location (${formatKm2(ringAreaKm2(ring))}). Draw a smaller box or shape instead.`)).toBeTruthy();
+    fireEvent.click(button);
+    expect(last).toEqual(start);
+  });
+
+  it("keeps Fit to place outline enabled, with no note, for a place that fits", () => {
+    render(<Harness start={initialArea(hydePark)} />);
+    expect((screen.getByRole("button", { name: "Fit to place outline" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(/too big to trace/)).toBeNull();
   });
 
   it("has no Fit to place outline without an outline", () => {

@@ -1,6 +1,6 @@
 // The area editor: a box or a shape drawn over the street map, plus the surrounding context fetched around it.
 // The overlay is in screen pixels (from the Basemap's projection); the value is always WGS84.
-import { useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { PlaceResult } from "@affinitygeo/geo-core";
 import {
   CONTEXT_DEFAULT_M, CONTEXT_MAX_M, CONTEXT_STEP_M, LARGE, MAX_KM2, OUTLINE_MAX_VERTICES, RING_MAX_VERTICES, TOO_BIG,
@@ -149,6 +149,10 @@ export function AreaEditor({ value, onChange, place, others = [], fitKey }: Area
   if (view.fitKey !== fitKey) setView({ fitKey, n: view.n + 1, bbox: viewBbox(value) });
 
   const canFit = outlineRings(place).length > 0;
+  // A place whose outline is too big to fetch (with the current context) can't be traced as one location.
+  const outline = useMemo(() => (place ? outlineShape(place) : null), [place]);
+  const outlineKm2 = outline ? fetchKm2({ ...value, kind: "shape", ring: outline }) : 0;
+  const outlineTooBig = outlineKm2 > MAX_KM2;
   const shapeKm2 = ringAreaKm2(value.ring);
   const fetchedKm2 = fetchKm2(value);
   const crossing = value.kind === "shape" ? validateRing(value.ring) : null;
@@ -165,10 +169,8 @@ export function AreaEditor({ value, onChange, place, others = [], fitKey }: Area
   }
 
   function fitOutline(): void {
-    if (!place) return;
-    const ring = outlineShape(place);
-    if (!ring) return;
-    const next: AreaValue = { ...value, kind: "shape", ring };
+    if (!outline || outlineTooBig) return;
+    const next: AreaValue = { ...value, kind: "shape", ring: outline };
     setSelected(null);
     setView({ fitKey, n: view.n + 1, bbox: viewBbox(next) });
     onChange(next);
@@ -183,7 +185,12 @@ export function AreaEditor({ value, onChange, place, others = [], fitKey }: Area
               onClick={() => setKind(k)}>{k === "box" ? "Box" : "Shape"}</button>
           ))}
         </div>
-        {canFit && <button type="button" className="btn btn-small" onClick={fitOutline}>Fit to place outline</button>}
+        {canFit && <button type="button" className="btn btn-small" disabled={outlineTooBig} onClick={fitOutline}>Fit to place outline</button>}
+        {canFit && outlineTooBig && (
+          <span className="help help-bad">
+            This place is too big to trace as one location ({formatKm2(outlineKm2)}). Draw a smaller box or shape instead.
+          </span>
+        )}
       </div>
       <div className="area-map">
         <Basemap fit={{ bbox: view.bbox }} fitKey={`${fitKey}#${view.n}`}>
