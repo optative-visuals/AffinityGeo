@@ -3,7 +3,8 @@ import proj4 from "proj4";
 import { clipPolygon, clipPolyline } from "lineclip";
 import type { ClipBox, ClipPoint } from "lineclip";
 import { WGS84 } from "../crs.js";
-import { buildLayerJob } from "../job.js";
+import { worldToPage } from "../frame.js";
+import { buildLayerJob, r2 } from "../job.js";
 import { projectDataset } from "../project.js";
 import { getProjection } from "../projections.js";
 import type { ResolvedProjection } from "../projections.js";
@@ -155,8 +156,8 @@ export function buildMapJob(project: Project, snap: ProjectSnapshot, mapId: stri
     const loc = findLocation(project, map);
     extras.mask = {
       ring: loc.ring.map((pt) => {
-        const [x, y] = rotate(proj4(WGS84.proj4, dst.proj4, pt) as Position);
-        return [x * t.scale + t.tx, t.ty - y * t.scale];
+        const [x, y] = worldToPage(t, ...(rotate(proj4(WGS84.proj4, dst.proj4, pt) as Position) as [number, number]));
+        return [r2(x), r2(y)];
       }),
     };
     if (map.showContext) extras.context = { opacity: 0.5, layers: buildLayers() };

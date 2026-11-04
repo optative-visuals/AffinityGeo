@@ -9,7 +9,8 @@ export const DEFAULT_STYLES: Record<GeometryKind, LayerStyle> = {
   point: { fill: "#333333", stroke: null, strokePt: 0, pointRadiusPt: 2 },
 };
 
-function r2(v: number): number {
+/** Round to 0.01 page units (and normalise -0). */
+export function r2(v: number): number {
   const r = Math.round(v * 100) / 100;
   return r === 0 ? 0 : r; // normalise -0
 }
