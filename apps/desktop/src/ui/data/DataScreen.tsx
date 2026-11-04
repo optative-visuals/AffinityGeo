@@ -1,4 +1,5 @@
 // The Data screen: a sortable, searchable, paged attribute table, a column picker, and "Select by attribute".
+// With several locations, a picker chooses whose data the table shows.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ROLE_IDS, ROLE_LABELS, type RoleId } from "@affinitygeo/geo-core/view";
 import { ApiFail, api, isNotConnected, type FeatureRow } from "../api.js";
@@ -8,7 +9,7 @@ import { Section } from "../shell/Inspector.js";
 import { Shell } from "../shell/Shell.js";
 import { toast } from "../shell/Toast.js";
 import type { TopBarProps } from "../shell/TopBar.js";
-import { useApp } from "../store.js";
+import { getActions, useApp } from "../store.js";
 
 export const PAGE_SIZE = 100;
 export const SEARCH_DEBOUNCE_MS = 300;
@@ -36,8 +37,11 @@ type Match = { state: "none" } | { state: "ok"; fids: string[] } | { state: "bad
 
 export function DataScreen({ topBar }: DataScreenProps) {
   useAreaPreview();
-  const { project, preview, counts, connection, selectedMapIds, select } = useApp();
-  const maps = project?.maps ?? [];
+  const { project, preview, counts, connection, selectedMapIds, select, selectedLocationId } = useApp();
+  const locations = project?.locations ?? [];
+  const location = (locations.find((l) => l.id === selectedLocationId) ?? locations[0])?.id;
+  // Select in Affinity only offers the maps drawn from this location's data.
+  const maps = (project?.maps ?? []).filter((m) => !location || m.locationId === location);
 
   const [role, setRole] = useState<RoleId>(() => ROLE_IDS.find((r) => (counts?.[r] ?? 0) > 0) ?? ROLE_IDS[0]!);
   const [search, setSearch] = useState("");
@@ -64,7 +68,7 @@ export function DataScreen({ topBar }: DataScreenProps) {
 
   useEffect(() => {
     const mine = ++seq.current.page;
-    api.features(role, { q: query, offset, limit: PAGE_SIZE, sort: sort?.key, dir: sort?.dir }).then((r) => {
+    api.features(role, { q: query, offset, limit: PAGE_SIZE, sort: sort?.key, dir: sort?.dir, location }).then((r) => {
       if (mine !== seq.current.page) return;
       setPage(r);
       setKnown((k) => {
@@ -73,7 +77,7 @@ export function DataScreen({ topBar }: DataScreenProps) {
         return add.length ? { ...k, [role]: [...have, ...add] } : k;
       });
     }, (e) => { if (mine === seq.current.page) toast(message(e), "error"); });
-  }, [role, query, offset, sort, project?.dataVersion]);
+  }, [role, query, offset, sort, project?.dataVersion, location]);
 
   const attrKeys = known[role] ?? [];
   const shown = chosen[role] ?? attrKeys.slice(0, DEFAULT_COLUMNS);
@@ -87,6 +91,14 @@ export function DataScreen({ topBar }: DataScreenProps) {
     setSearch(""); setQuery("");
     setFilter(""); setAsked(""); setMatch({ state: "none" });
     seq.current.match++;
+  }
+
+  function changeLocation(id: string): void {
+    setPage({ total: 0, rows: [] });
+    setOffset(0);
+    setFilter(""); setAsked(""); setMatch({ state: "none" });
+    seq.current.match++;
+    getActions().selectLocation(id);
   }
 
   function clickHeader(key: string): void {
@@ -106,7 +118,7 @@ export function DataScreen({ topBar }: DataScreenProps) {
     const mine = ++seq.current.match;
     if (!text) { setAsked(""); setMatch({ state: "none" }); return; }
     try {
-      const r = await api.match(role, text);
+      const r = await api.match(role, text, location);
       if (mine !== seq.current.match) return;
       setAsked(text); setMatch({ state: "ok", fids: r.fids });
     } catch (e) {
@@ -149,6 +161,11 @@ export function DataScreen({ topBar }: DataScreenProps) {
       <div className="data-screen">
         <div className="data-panel">
           <div className="data-bar">
+            {locations.length > 1 && (
+              <select aria-label="Location" value={location} onChange={(e) => changeLocation(e.target.value)}>
+                {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            )}
             <select aria-label="Layer" value={role} onChange={(e) => changeRole(e.target.value as RoleId)}>
               {ROLE_IDS.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]} ({fmtCount(counts?.[r] ?? 0)})</option>)}
             </select>

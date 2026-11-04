@@ -1,18 +1,19 @@
-// The Area screen: the place and its data (refresh), where each kind of data comes from, and the projection.
-import { useEffect, useId, useState } from "react";
-import { ROLE_IDS, ROLE_LABELS, areaKm2, type RoleId } from "@affinitygeo/geo-core/view";
+// The Area screen: the project's locations (each a box or shape with its own data), where each kind of data comes
+// from, and the projection. The selected location is edited on the street map beside the settings.
+import { useEffect, useId, useRef, useState } from "react";
+import type { LocationSpec, MapSpec } from "@affinitygeo/geo-core";
+import { CONTEXT_DEFAULT_M, ROLE_IDS, ROLE_LABELS, boxRing, ringAreaKm2, ringBbox, type RoleId } from "@affinitygeo/geo-core/view";
 import { api, type ProjectionOption } from "../api.js";
 import { confirm } from "../shell/Confirm.js";
+import { TextField } from "../shell/fields.js";
 import { Section } from "../shell/Inspector.js";
 import { Shell } from "../shell/Shell.js";
 import { toast } from "../shell/Toast.js";
 import type { TopBarProps } from "../shell/TopBar.js";
-import { getActions, useApp } from "../store.js";
-import { formatKm2 } from "./AreaEditor.js";
-import { FetchPanel, useFetchData } from "./fetch.js";
+import { getActions, getApp, registerPendingEdit, useApp } from "../store.js";
+import { AreaEditor, areaError, formatKm2, squareAround, type AreaValue } from "./AreaEditor.js";
+import { FetchPanel, useFetchData, type FetchState } from "./fetch.js";
 import { platform } from "../platform.js";
-import { MapCanvas } from "../map/MapCanvas.js";
-import { useAreaPreview } from "../map/useAreaPreview.js";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const fmtCount = (n: number) => n.toLocaleString("en-GB");
@@ -32,7 +33,8 @@ function RolePicker({ file, initialRole, onDone }: { file: string; initialRole: 
     try {
       const { counts } = await api.importFile(file, role);
       await getActions().refreshProject();
-      const n = counts?.[role];
+      // The reply counts the first location; the store has the selected one's.
+      const n = (getApp().counts ?? counts)?.[role];
       toast(n === undefined ? `Imported ${fileName(file)}.` : `Imported ${fileName(file)}: ${fmtCount(n)} objects.`, "success");
       onDone(role);
     } catch (e) {
@@ -169,35 +171,39 @@ function ProjectionChoice() {
   );
 }
 
-function AreaDetails() {
-  const { project } = useApp();
-  const fetcher = useFetchData();
-  if (!project) return null;
-  const { state, seconds } = fetcher;
-  const busy = state.status === "busy";
-  const changes = state.status === "done"
-    ? ROLE_IDS.filter((r) => state.changed[r]).map((r) => {
-      const c = state.changed[r]!;
-      return `${ROLE_LABELS[r]} ${fmtCount(c.before)} → ${fmtCount(c.after)}`;
-    })
-    : [];
+const fmtDay = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+const mapsLabel = (n: number) => (n === 0 ? "No maps" : n === 1 ? "1 map" : `${n} maps`);
+const valueOf = (l: LocationSpec): AreaValue => ({ kind: l.kind, ring: l.ring, contextM: l.contextM });
 
+/** A changed shape or context is saved after this pause. */
+export const LOCATION_DEBOUNCE_MS = 400;
+/** A new location starts as a box of about this size. */
+const NEW_LOCATION_KM2 = 0.5;
+export const CHANGED_NOTE = "Changed: refresh to fetch the new area";
+
+/** Locations reshaped since their last fetch ("projectId:locationId"), kept while the person visits other screens. */
+const changedSinceFetch = new Set<string>();
+
+function LocationList({ locations, maps, selectedId, onSelect }: {
+  locations: LocationSpec[]; maps: MapSpec[]; selectedId: string | null; onSelect(id: string): void;
+}) {
   return (
-    <Section chip="Area">
-      <div className="area-head">
-        <div>
-          <div className="area-place">{project.area.placeName}</div>
-          <div className="muted" data-testid="area-size">{formatKm2(areaKm2(project.area.bboxWgs84))}</div>
-        </div>
-        <button type="button" className="btn" disabled={busy} onClick={() => { void fetcher.run(); }}>Refresh data</button>
-      </div>
-      <p className="help">Fetches the latest OpenStreetMap data for this area. Data from files is kept as it is.</p>
-      {busy && <FetchPanel seconds={seconds} />}
-      {state.status === "error" && <p className="help help-bad" role="alert">{state.message}</p>}
-      {state.status === "done" && (changes.length === 0
-        ? <p className="muted">Nothing changed</p>
-        : <ul className="change-list" aria-label="Changes">{changes.map((c) => <li key={c}>{c}</li>)}</ul>)}
-    </Section>
+    <ul className="location-list" aria-label="Locations">
+      {locations.map((l) => {
+        const count = maps.filter((m) => m.locationId === l.id).length;
+        return (
+          <li key={l.id}>
+            <button type="button" className={`location-row${l.id === selectedId ? " is-selected" : ""}`}
+              aria-pressed={l.id === selectedId} onClick={() => onSelect(l.id)}>
+              <span className="location-name">{l.name}</span>
+              <span className="muted location-meta">
+                {formatKm2(ringAreaKm2(l.ring))} · {mapsLabel(count)} · {l.fetchedAt ? `Fetched ${fmtDay(l.fetchedAt)}` : "Not fetched"}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -205,33 +211,184 @@ export interface AreaScreenProps {
   topBar: TopBarProps;
 }
 
-const none = () => undefined;
-
-/** The area map beside the settings: pan and zoom, with the map frames shown but not editable here. */
-function AreaMap() {
-  useAreaPreview();
-  const { project, preview } = useApp();
-  if (!project) return null;
-  return (
-    <div className="area-preview">
-      <MapCanvas preview={preview.data ?? null} style={project.style} maps={project.maps} selectedIds={[]} mode="browse" readOnly
-        onSelect={none} onAdd={none} onMove={none} onRotate={none} onPick={none} />
-      {preview.status === "none" && <div className="map-canvas-note">No map data yet. Choose Refresh data to fetch it.</div>}
-      {preview.status === "loading" && <div className="map-canvas-note">Loading the map…</div>}
-    </div>
-  );
-}
-
 export function AreaScreen({ topBar }: AreaScreenProps) {
+  const { project, selectedLocationId } = useApp();
+  const fetcher = useFetchData();
+  /** The location the fetch result on screen belongs to. */
+  const [fetchedFor, setFetchedFor] = useState<string | null>(null);
+  /** A new location being drawn, not saved yet. */
+  const [adding, setAdding] = useState<AreaValue | null>(null);
+  const [saving, setSaving] = useState(false);
+  /** The selected location's shape while its change waits to be saved. */
+  const [draft, setDraft] = useState<{ id: string; value: AreaValue } | null>(null);
+  const [changed, setChanged] = useState(() => new Set(changedSinceFetch));
+  const timer = useRef<number | undefined>(undefined);
+  /** Saves the waiting change now; null when nothing waits. */
+  const pending = useRef<(() => Promise<void>) | null>(null);
+  const unregister = useRef<(() => void) | null>(null);
+
+  function cancelPending(): void {
+    window.clearTimeout(timer.current);
+    pending.current = null;
+    unregister.current?.();
+    unregister.current = null;
+  }
+  const flushPending = () => pending.current?.() ?? Promise.resolve();
+
+  // Leaving the screen saves a change still waiting.
+  useEffect(() => () => { void pending.current?.(); }, []);
+
+  const locations = project?.locations ?? [];
+  const selected = locations.find((l) => l.id === selectedLocationId) ?? locations[0] ?? null;
+  const keyOf = (id: string) => `${project?.id}:${id}`;
+
+  function markChanged(id: string, on: boolean): void {
+    if (on) changedSinceFetch.add(keyOf(id)); else changedSinceFetch.delete(keyOf(id));
+    setChanged(new Set(changedSinceFetch));
+  }
+
+  function edit(v: AreaValue): void {
+    if (adding) { setAdding(v); return; }
+    if (!selected) return;
+    const id = selected.id;
+    setDraft({ id, value: v });
+    markChanged(id, true);
+    cancelPending();
+    const save = async (): Promise<void> => {
+      cancelPending();
+      if (areaError(v)) return; // shown under the editor; the server would refuse it
+      try {
+        await api.patchLocation(id, v);
+        await getActions().refreshProject();
+      } catch (e) {
+        toast(message(e), "error");
+      }
+      setDraft((d) => (d?.value === v ? null : d));
+    };
+    pending.current = save;
+    // The close guard and New/Open save it before deciding whether anything is unsaved.
+    unregister.current = registerPendingEdit(save);
+    timer.current = window.setTimeout(() => { void save(); }, LOCATION_DEBOUNCE_MS);
+  }
+
+  function select(id: string): void {
+    void flushPending();
+    setAdding(null);
+    getActions().selectLocation(id);
+  }
+
+  function startAdding(): void {
+    if (!selected) return;
+    void flushPending();
+    // The editor is fitted to the selected location, so its centre is the view's centre.
+    const [w, s, e, n] = ringBbox(selected.ring);
+    setAdding({ kind: "box", ring: boxRing(squareAround([(w + e) / 2, (s + n) / 2], NEW_LOCATION_KM2)), contextM: CONTEXT_DEFAULT_M });
+  }
+
+  async function saveNew(): Promise<void> {
+    if (!adding) return;
+    setSaving(true);
+    try {
+      const created = await api.addLocation({ placeName: "", kind: adding.kind, ring: adding.ring, contextM: adding.contextM });
+      await getActions().refreshProject();
+      getActions().selectLocation(created.id);
+      setAdding(null);
+      if (created.warning) toast(created.warning, "info");
+    } catch (e) {
+      toast(message(e), "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function refresh(): Promise<void> {
+    if (!selected) return;
+    const id = selected.id;
+    await flushPending();
+    setFetchedFor(id);
+    if (await fetcher.run(id)) markChanged(id, false);
+  }
+
+  async function remove(): Promise<void> {
+    if (!selected) return;
+    const { id, name } = selected;
+    const answer = await confirm({
+      title: "Delete location?",
+      body: `Delete '${name}' and its fetched data from this project?`,
+      buttons: ["Cancel", { label: "Delete", kind: "danger" }],
+    });
+    if (answer !== "Delete") return;
+    try {
+      await api.deleteLocation(id);
+    } catch (e) {
+      toast(message(e), "error"); // maps still use it, or it is the last one
+      return;
+    }
+    if (draft?.id === id) { cancelPending(); setDraft(null); }
+    markChanged(id, false);
+    try { await getActions().refreshProject(); } catch (e) { toast(message(e), "error"); }
+  }
+
+  const value = adding ?? (selected ? (draft?.id === selected.id ? draft.value : valueOf(selected)) : null);
+  const others = locations.filter((l) => adding || l.id !== selected?.id).map((l) => ({ name: l.name, ring: l.ring }));
+  const { state, seconds } = fetcher;
+  const busy = state.status === "busy";
+  const result: FetchState = fetchedFor === selected?.id ? state : { status: "idle" };
+  const changes = result.status === "done"
+    ? ROLE_IDS.filter((r) => result.changed[r]).map((r) => {
+      const c = result.changed[r]!;
+      return `${ROLE_LABELS[r]} ${fmtCount(c.before)} → ${fmtCount(c.after)}`;
+    })
+    : [];
+
   return (
     <Shell topBar={topBar}>
       <div className="area-screen">
         <div className="area-page">
-          <AreaDetails />
+          {project && (
+            <Section chip="Locations">
+              <LocationList locations={locations} maps={project.maps} selectedId={adding ? null : selected?.id ?? null} onSelect={select} />
+              {adding ? (
+                <div className="location-adding">
+                  <p className="help">Drag the new box into place, or switch to Shape, then save it.</p>
+                  <div className="location-buttons">
+                    <button type="button" className="btn" disabled={saving} onClick={() => setAdding(null)}>Cancel</button>
+                    <button type="button" className="btn btn-primary" disabled={saving || areaError(adding) !== null}
+                      onClick={() => { void saveNew(); }}>Save location</button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" className="btn location-add" onClick={startAdding}>Add location</button>
+              )}
+            </Section>
+          )}
+          {selected && !adding && (
+            <Section chip="Location">
+              <TextField label="Name" value={selected.name}
+                onCommit={async (name) => { await api.patchLocation(selected.id, { name }); await getActions().refreshProject(); }} />
+              {changed.has(keyOf(selected.id)) && <p className="help help-warn">{CHANGED_NOTE}</p>}
+              <div className="location-buttons">
+                <button type="button" className="btn" disabled={busy || (value !== null && areaError(value) !== null)}
+                  onClick={() => { void refresh(); }}>Refresh data</button>
+                <button type="button" className="btn btn-danger" disabled={busy} onClick={() => { void remove(); }}>Delete location…</button>
+              </div>
+              <p className="help">Fetches the latest OpenStreetMap data for this location. Data from files is kept as it is.</p>
+              {busy && fetchedFor === selected.id && <FetchPanel seconds={seconds} />}
+              {result.status === "error" && <p className="help help-bad" role="alert">{result.message}</p>}
+              {result.status === "done" && (changes.length === 0
+                ? <p className="muted">Nothing changed</p>
+                : <ul className="change-list" aria-label="Changes">{changes.map((c) => <li key={c}>{c}</li>)}</ul>)}
+            </Section>
+          )}
           <Sources />
           <ProjectionChoice />
         </div>
-        <AreaMap />
+        <div className="area-preview area-stage">
+          {value && (
+            <AreaEditor value={value} onChange={edit} others={others}
+              fitKey={adding ? `${project?.id}:new` : `${project?.id}:${selected?.id}`} />
+          )}
+        </div>
       </div>
     </Shell>
   );

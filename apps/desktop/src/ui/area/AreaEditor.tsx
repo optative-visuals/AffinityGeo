@@ -37,8 +37,8 @@ export function areaError(v: AreaValue): string | null {
 const KM_PER_DEG = 111.32;
 const RAD = Math.PI / 180;
 
-/** A square of `km2` centred on a point. */
-function squareAround([lon, lat]: XY, km2: number): Bbox {
+/** A square of `km2` centred on a point ([lon, lat]). */
+export function squareAround([lon, lat]: XY, km2: number): Bbox {
   const half = Math.sqrt(km2) / 2;
   const dLat = half / KM_PER_DEG, dLon = half / (KM_PER_DEG * Math.cos(lat * RAD));
   return [lon - dLon, lat - dLat, lon + dLon, lat + dLat];

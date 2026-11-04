@@ -412,9 +412,25 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); outline: 
   background: var(--panel); border-right: 1px solid var(--border);
 }
 .area-preview { position: relative; flex: 1; min-width: 0; }
-.area-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.area-place { font-size: 15px; font-weight: 600; }
 .change-list { margin: 0; padding-left: 18px; }
+/* The editor fills the stage beside the settings. */
+.area-stage { display: flex; flex-direction: column; padding: 12px; overflow-y: auto; }
+.area-stage .area-editor { flex: 1; min-height: 0; }
+.area-stage .area-map { flex: 1; height: auto; min-height: 260px; }
+
+.location-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.location-row {
+  width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 6px 8px; text-align: left;
+  background: transparent; border: 1px solid transparent; border-radius: var(--radius); color: var(--text); font: inherit; cursor: pointer;
+}
+.location-row:hover { background: var(--tile); }
+.location-row.is-selected { background: var(--tile); border-color: var(--blue); }
+.location-name { font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.location-meta { font-size: var(--fs-small); }
+.location-add { align-self: flex-start; margin-top: 8px; }
+.location-adding { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.location-adding .help { margin: 0; }
+.location-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 
 .source-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .source-row { display: flex; align-items: center; gap: 10px; min-height: 30px; border-bottom: 1px solid var(--border); }

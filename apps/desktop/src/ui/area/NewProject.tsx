@@ -61,6 +61,8 @@ export function NewProject({ onClose }: NewProjectProps) {
   const [created, setCreated] = useState(false);
   const fetcher = useFetchData();
   const seq = useRef(0);
+  /** The new project's first location, fetched after Create (and by Try again). */
+  const locationId = useRef<string | null>(null);
 
   // Search: wait for 400 ms of quiet, and never closer than a second to the previous request.
   useEffect(() => {
@@ -106,7 +108,7 @@ export function NewProject({ onClose }: NewProjectProps) {
   const blocked = area ? areaError(area) !== null : true;
 
   async function fetchData(): Promise<void> {
-    if (await fetcher.run()) onClose();
+    if (locationId.current && await fetcher.run(locationId.current)) onClose();
   }
 
   async function create(): Promise<void> {
@@ -117,6 +119,7 @@ export function NewProject({ onClose }: NewProjectProps) {
       const project = await api.newProject(name.trim() || firstPart(place.name), { placeName: place.name, kind: area.kind, ring: area.ring, contextM: area.contextM }, preset);
       // A different project: the old project's send summary no longer applies.
       closeSummary();
+      locationId.current = project.locations[0]?.id ?? null;
       setCreated(true);
       const actions = getActions();
       await actions.refreshProject().catch(() => undefined); // the fetch below reads it again

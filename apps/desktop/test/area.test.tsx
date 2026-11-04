@@ -2,8 +2,8 @@
 // The new-project flow and the Area screen.
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PlaceResult } from "@affinitygeo/geo-core";
-import { CONTEXT_DEFAULT_M, TOO_BIG, ringBbox, type AreaSpec, type ProjectStyle } from "@affinitygeo/geo-core/view";
+import type { LocationSpec, PlaceResult } from "@affinitygeo/geo-core";
+import { CONTEXT_DEFAULT_M, TOO_BIG, boxRing, ringAreaKm2, ringBbox, type AreaSpec, type ProjectStyle } from "@affinitygeo/geo-core/view";
 import { ApiFail, api, type ProjectionOption } from "../src/ui/api.js";
 import { platform } from "../src/ui/platform.js";
 import { AreaScreen } from "../src/ui/area/AreaScreen.js";
@@ -22,8 +22,13 @@ type Project = NonNullable<AppState["project"]>;
 const style = { presetName: "T", roles: {} } as unknown as ProjectStyle;
 const area: AreaSpec = { placeName: "Hyde Park", bboxWgs84: [-0.17, 51.50, -0.14, 51.52], projectionId: "bng" };
 let current: Project;
+const loc = (id: string, name: string, over: Partial<LocationSpec> = {}): LocationSpec => ({
+  id, name, placeName: "Hyde Park, London", kind: "box", ring: boxRing([-0.17, 51.50, -0.14, 51.52]), contextM: 200,
+  dataVersion: 1, fetchedAt: "2026-11-04T10:00:00.000Z", ...over,
+});
 const projectWith = (over: Partial<Project> = {}): Project =>
-  ({ id: "p1", name: "W", area, style, maps: [], dataVersion: 1, sources: { buildings: { kind: "osm" } }, fetchedAt: null, version: 1, ...over }) as unknown as Project;
+  ({ id: "p1", name: "W", area, style, maps: [], dataVersion: 1, sources: { buildings: { kind: "osm" } }, fetchedAt: null, version: 2,
+    locations: [loc("loc-1", "Hyde Park")], ...over }) as unknown as Project;
 
 const small: PlaceResult = {
   name: "Hyde Park, London, England", centre: [-0.16, 51.51], bboxWgs84: [-0.17, 51.505, -0.15, 51.515],
@@ -266,9 +271,9 @@ describe("Area screen", () => {
     render(<AreaScreen topBar={topBar} />);
   }
 
-  it("shows the area map beside the settings, with the map frames", () => {
+  it("shows the selected location's area editor beside the settings", () => {
     start();
-    expect(screen.getByLabelText("Map view")).toBeTruthy();
+    expect(screen.getByLabelText("Area editor")).toBeTruthy();
   });
 
   it("Refresh data lists the changes per role, or says nothing changed", async () => {
@@ -285,11 +290,11 @@ describe("Area screen", () => {
     expect(screen.queryByText("Buildings 2,380 → 2,400")).toBeNull();
   });
 
-  it("shows the place, its size and a busy panel while refreshing", async () => {
+  it("shows the location, its size and a busy panel while refreshing", async () => {
     start();
     vi.spyOn(api, "refresh").mockImplementation(() => new Promise(() => {}));
-    expect(screen.getByText("Hyde Park")).toBeTruthy();
-    expect(screen.getByTestId("area-size").textContent).toMatch(/km²$/);
+    const row = within(screen.getByRole("list", { name: "Locations" })).getByRole("button", { name: /Hyde Park/ });
+    expect(row.textContent).toMatch(/km²/);
     fireEvent.click(screen.getByRole("button", { name: "Refresh data" }));
     await flushReal();
     expect(screen.getByText(/Fetching from OpenStreetMap… 0 s/)).toBeTruthy();
@@ -404,6 +409,104 @@ describe("Area screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Change projection" }));
     await flushReal();
     expect(set).toHaveBeenCalledWith("utm", { zone: 30 });
+  });
+
+  describe("locations", () => {
+    const two = () => ({
+      locations: [loc("loc-1", "Hyde Park"), loc("loc-2", "Green Park", { fetchedAt: null, ring: boxRing([-0.15, 51.50, -0.14, 51.51]) })],
+      maps: [{ id: "m1", name: "M", locationId: "loc-1" }] as never,
+    });
+    const rowsList = () => screen.getByRole("list", { name: "Locations" });
+    const nameField = () => screen.getByLabelText("Name") as HTMLInputElement;
+
+    it("lists each location with its size, maps and status, and selecting one shows it", async () => {
+      start(two());
+      await flushReal();
+      const rows = within(rowsList()).getAllByRole("listitem");
+      expect(rows).toHaveLength(2);
+      expect(rows[0]!.textContent).toContain("Hyde Park");
+      expect(rows[0]!.textContent).toContain("1 map");
+      expect(rows[0]!.textContent).toContain("Fetched 4 Nov");
+      expect(rows[1]!.textContent).toContain("No maps");
+      expect(rows[1]!.textContent).toContain("Not fetched");
+      expect(nameField().value).toBe("Hyde Park");
+      fireEvent.click(within(rows[1]!).getByRole("button"));
+      await flushReal();
+      expect(getApp().selectedLocationId).toBe("loc-2");
+      expect(nameField().value).toBe("Green Park");
+    });
+
+    it("Add location starts a box of about 0.5 km², and Save adds it and selects it", async () => {
+      start();
+      await flushReal();
+      const add = vi.spyOn(api, "addLocation").mockImplementation(async (input) => {
+        const created = loc("loc-2", "Location 2", { placeName: input.placeName, kind: input.kind, ring: input.ring, contextM: input.contextM ?? 200, fetchedAt: null });
+        current = projectWith({ locations: [...current.locations, created] });
+        return created;
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Add location" }));
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Save location" }));
+      await flushReal();
+      expect(add).toHaveBeenCalledTimes(1);
+      const input = add.mock.calls[0]![0];
+      expect(input.kind).toBe("box");
+      expect(input.contextM).toBe(CONTEXT_DEFAULT_M);
+      expect(ringAreaKm2(input.ring)).toBeGreaterThan(0.4);
+      expect(ringAreaKm2(input.ring)).toBeLessThan(0.6);
+      expect(getApp().selectedLocationId).toBe("loc-2");
+      expect(nameField().value).toBe("Location 2");
+      expect(screen.queryByRole("button", { name: "Save location" })).toBeNull();
+    });
+
+    it("Cancel leaves the locations as they were", async () => {
+      start();
+      await flushReal();
+      const add = vi.spyOn(api, "addLocation");
+      fireEvent.click(screen.getByRole("button", { name: "Add location" }));
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(add).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Add location" })).toBeTruthy();
+    });
+
+    it("Delete location asks first, and shows the refusal when maps use it", async () => {
+      start(two());
+      await flushReal();
+      const del = vi.spyOn(api, "deleteLocation").mockRejectedValue(new ApiFail(400, "Delete this location's maps first."));
+      fireEvent.click(screen.getByRole("button", { name: "Delete location…" }));
+      await flushReal();
+      expect(del).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+      await flushReal();
+      expect(del).toHaveBeenCalledWith("loc-1");
+      expect(screen.getByText("Delete this location's maps first.")).toBeTruthy();
+    });
+
+    it("editing the context saves once after 400 ms and marks the location changed", async () => {
+      vi.useFakeTimers();
+      start();
+      await act(() => vi.advanceTimersByTimeAsync(0));
+      const patch = vi.spyOn(api, "patchLocation").mockImplementation(async (_id, p) => ({ ...current.locations[0]!, ...p }));
+      fireEvent.change(screen.getByLabelText("Surrounding context"), { target: { value: "300" } });
+      fireEvent.change(screen.getByLabelText("Surrounding context"), { target: { value: "400" } });
+      expect(screen.getByText("Changed: refresh to fetch the new area")).toBeTruthy();
+      await act(() => vi.advanceTimersByTimeAsync(399));
+      expect(patch).not.toHaveBeenCalled();
+      await act(() => vi.advanceTimersByTimeAsync(1));
+      expect(patch).toHaveBeenCalledTimes(1);
+      expect(patch).toHaveBeenCalledWith("loc-1", expect.objectContaining({ contextM: 400 }));
+    });
+
+    it("Refresh data fetches the selected location", async () => {
+      start(two());
+      await flushReal();
+      const refresh = vi.spyOn(api, "refresh").mockResolvedValue({ counts: {} as never, changed: {} });
+      fireEvent.click(within(within(rowsList()).getAllByRole("listitem")[1]!).getByRole("button"));
+      await flushReal();
+      fireEvent.click(screen.getByRole("button", { name: "Refresh data" }));
+      await flushReal();
+      expect(refresh).toHaveBeenCalledWith("loc-2");
+    });
   });
 });
 
