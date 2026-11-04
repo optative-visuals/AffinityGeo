@@ -1,6 +1,7 @@
 // The street basemap: MapLibre on OpenFreeMap tiles, with overlays drawn above it in screen pixels.
-// Offline (or on any map error) it falls back to a plain canvas and a Web Mercator fit of the same bbox,
-// so project/unproject, and therefore the overlays, keep working.
+// Offline (or when the style fails before the first load) it falls back to a plain canvas and a Web
+// Mercator fit of the same bbox, so project/unproject, and therefore the overlays, keep working.
+// A failed tile after the load is ignored; back online, the map is made again.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AttributionControl, Map as MapLibreMap, NavigationControl } from "maplibre-gl";
 import type { Bbox } from "@affinitygeo/geo-core";
@@ -71,12 +72,24 @@ export function Basemap({ fit, fitKey, children }: BasemapProps) {
     m.addControl(new AttributionControl({ compact: true }), "bottom-right");
     m.addControl(new NavigationControl({ showCompass: false, visualizePitch: false }), "top-right");
     m.on("move", () => setVersion((v) => v + 1));
-    m.on("error", () => setOffline(true));
+    // Before the first load an error is the style, sprite or glyphs: no map to show. After it, a
+    // failed tile only leaves a gap, unless the browser has gone offline.
+    let loaded = false;
+    m.on("load", () => { loaded = true; });
+    m.on("error", () => { if (!loaded || navigator.onLine === false) setOffline(true); });
     setMap(m);
     const { bbox, paddingPx } = fitRef.current;
     m.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: paddingPx ?? DEFAULT_PADDING, animate: false });
     return () => { setMap(null); m.remove(); };
   }, [offline]);
+
+  useEffect(() => {
+    const goOffline = () => setOffline(true);
+    const goOnline = () => setOffline(false);
+    window.addEventListener("offline", goOffline);
+    window.addEventListener("online", goOnline);
+    return () => { window.removeEventListener("offline", goOffline); window.removeEventListener("online", goOnline); };
+  }, []);
 
   const bboxKey = fit.bbox.join(",");
   const paddingPx = fit.paddingPx ?? DEFAULT_PADDING;

@@ -68,6 +68,34 @@ describe("Basemap", () => {
     expect(screen.getByTestId("overlay")).toBeTruthy();
   });
 
+  it("keeps the map on a tile error after it has loaded", () => {
+    render(<Basemap fit={{ bbox }} fitKey="a" />);
+    act(() => emit("load"));
+    act(() => emit("error", { error: new Error("one tile failed") }));
+    expect(screen.queryByText("Street map unavailable offline")).toBeNull();
+    expect(mocks.instances[0]!.remove).not.toHaveBeenCalled();
+  });
+
+  it("falls back on an error after load when the browser has gone offline", () => {
+    render(<Basemap fit={{ bbox }} fitKey="a" />);
+    act(() => emit("load"));
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    act(() => emit("error", { error: new Error("net") }));
+    expect(screen.getByText("Street map unavailable offline")).toBeTruthy();
+  });
+
+  it("falls back on the window's offline event and recreates the map when back online", () => {
+    render(<Basemap fit={{ bbox }} fitKey="a" />);
+    act(() => emit("load"));
+    act(() => { window.dispatchEvent(new Event("offline")); });
+    expect(screen.getByText("Street map unavailable offline")).toBeTruthy();
+    expect(mocks.instances[0]!.remove).toHaveBeenCalled();
+    act(() => { window.dispatchEvent(new Event("online")); });
+    expect(screen.queryByText("Street map unavailable offline")).toBeNull();
+    expect(mocks.instances).toHaveLength(2);
+    expect(mocks.instances[1]!.fitBounds).toHaveBeenCalledWith([[-0.17, 51.5], [-0.14, 51.52]], expect.objectContaining({ animate: false }));
+  });
+
   it("starts in the offline fallback without creating a map when the browser is offline", () => {
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
     render(<Basemap fit={{ bbox }} fitKey="a" />);
