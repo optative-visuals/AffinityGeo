@@ -3,6 +3,9 @@ import type { MapSpec } from "@affinitygeo/geo-core";
 import { api, type MapStatus, type TargetDocument } from "../api.js";
 import { getActions } from "../store.js";
 
+/** Shown for a map whose frame is partly outside its location's data (the inspector, and the Gallery dot's label). */
+export const OUTSIDE_WARNING = "Part of this map is outside its location's data.";
+
 const TONES: Record<MapStatus, "grey" | "green" | "amber" | "red"> = {
   "Not sent": "grey",
   "Up to date": "green",

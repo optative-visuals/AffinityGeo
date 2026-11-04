@@ -6,7 +6,7 @@ import type { MapJob, MapSpec, Project, ProjectStyle } from "@affinitygeo/geo-co
 import { api } from "../api.js";
 import { paperColour } from "../map/draw.js";
 import { useApp } from "../store.js";
-import { StatusBadge, badgeFor, targetLine } from "./status.js";
+import { OUTSIDE_WARNING, StatusBadge, badgeFor, targetLine } from "./status.js";
 import { TargetPicker } from "./TargetPicker.js";
 
 const PT_MM = 25.4 / 72;
@@ -14,8 +14,10 @@ const MARGIN_PX = 8;
 
 /** What a thumbnail depends on: when this changes, it's fetched again. */
 export function thumbKey(project: Project, map: MapSpec, counts: unknown): string {
+  const loc = project.locations?.find((l) => l.id === map.locationId);
   return JSON.stringify([project.id, project.dataVersion, project.area, project.style, counts,
-    map.centre, map.scale, map.rotationDeg, map.sizeMm, map.marker]);
+    loc ? [loc.dataVersion, loc.kind, loc.ring, loc.contextM] : null,
+    map.centre, map.scale, map.rotationDeg, map.sizeMm, map.marker, map.locationId, map.showContext]);
 }
 
 const cache = new Map<string, { key: string; job: MapJob }>();
@@ -146,7 +148,7 @@ export interface GalleryProps {
 }
 
 export function Gallery({ onSelect }: GalleryProps) {
-  const { project, statuses, targets, selectedMapIds } = useApp();
+  const { project, statuses, outside, targets, selectedMapIds } = useApp();
   const [picking, setPicking] = useState<string | null>(null);
   if (!project) return null;
   if (!project.maps.length) {
@@ -162,7 +164,10 @@ export function Gallery({ onSelect }: GalleryProps) {
             onClick={(e) => onSelect(m.id, e.shiftKey || e.ctrlKey || e.metaKey)}>
             <Thumb project={project} map={m} />
             <div className="gallery-card-text">
-              <div className="gallery-card-name"><span className="map-number">{i + 1}</span><strong>{m.name}</strong></div>
+              <div className="gallery-card-name">
+                <span className="map-number">{i + 1}</span><strong>{m.name}</strong>
+                {outside[m.id] && <span className="outside-dot" role="img" aria-label={OUTSIDE_WARNING} title={OUTSIDE_WARNING} />}
+              </div>
               <div className="muted gallery-card-target">{targetLine(m, targets, project.id)}</div>
               <div className="gallery-card-foot">
                 <StatusBadge status={status} />

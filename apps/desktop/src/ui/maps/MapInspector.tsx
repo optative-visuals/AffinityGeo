@@ -1,4 +1,4 @@
-// The inspector for one map: Map / Size / Document / Marker / Actions. Each field PATCHes only its own setting.
+// The inspector for one map: Map / Location / Size / Document / Marker / Actions. Each field PATCHes only its own setting.
 import { useEffect, useId, useRef, useState } from "react";
 import type { MapSpec, ProjectStyle } from "@affinitygeo/geo-core";
 import { SCALE_MAX, SCALE_MIN, scaleToSlider, sliderToScale } from "@affinitygeo/geo-core/view";
@@ -8,9 +8,9 @@ import { NumberField, TextField } from "../shell/fields.js";
 import { Section } from "../shell/Inspector.js";
 import { PinIcon } from "../shell/icons.js";
 import { toast } from "../shell/Toast.js";
-import { getActions, registerPendingEdit } from "../store.js";
+import { getActions, registerPendingEdit, useApp } from "../store.js";
 import { PAPER, fmtMm, isLandscape, paperFor, paperSize, sizeLabel, upLabel, type PaperId } from "./sizes.js";
-import { patchMap } from "./status.js";
+import { OUTSIDE_WARNING, patchMap } from "./status.js";
 import { TargetPicker } from "./TargetPicker.js";
 
 /** The slider waits this long after the last move before it saves. */
@@ -70,6 +70,39 @@ function ScaleControl({ map }: { map: MapSpec }) {
           unregister.current = registerPendingEdit(save);
           timer.current = window.setTimeout(save, SLIDER_DEBOUNCE_MS);
         }} />
+    </>
+  );
+}
+
+/** The map's location (named when there are several), its context checkbox, and the outside warning. */
+function LocationControls({ map }: { map: MapSpec }) {
+  const contextId = useId();
+  const { project, outside } = useApp();
+  const locations = project?.locations ?? [];
+  const location = locations.find((l) => l.id === map.locationId);
+  // A box drawn with no margin has nothing around it to fade in.
+  const noContext = location?.kind === "box" && location.contextM === 0;
+  return (
+    <>
+      {outside[map.id] && <span className="help help-warn">{OUTSIDE_WARNING}</span>}
+      {locations.length > 1 && (
+        <div className="field">
+          <span className="field-label">Location</span>
+          <span>{location?.name ?? "—"}</span>
+        </div>
+      )}
+      <div className="field">
+        <label className="check" htmlFor={contextId}>
+          <input id={contextId} type="checkbox" checked={map.showContext} disabled={noContext}
+            onChange={(e) => { patchMap(map.id, { showContext: e.target.checked }).catch((err) => toast(message(err), "error")); }} />
+          <span>Show surrounding context</span>
+        </label>
+        <span className="help">
+          {noContext
+            ? "Add surrounding context to this location on the Area screen first."
+            : "Fades in the streets around the location. Hidden areas aren't sent to Affinity."}
+        </span>
+      </div>
     </>
   );
 }
@@ -149,6 +182,9 @@ export function MapInspector({ map, style, sending = false, onPickCentre, onSend
         <ScaleControl map={map} />
         <NumberField label="Rotation" value={map.rotationDeg} format={fmtDeg} help={upLabel(map.rotationDeg)}
           onCommit={(n) => patchMap(map.id, { rotationDeg: n })} />
+      </Section>
+      <Section chip="Location">
+        <LocationControls map={map} />
       </Section>
       <Section chip="Size">
         <SizeControls map={map} />
