@@ -13,3 +13,5 @@ export interface AppDriver {
   electron(): ElectronApplication;
   logs(lines: number): Promise<{ mainLog: string[]; consoleErrors: string[] }>;
 }
+
+export const NOT_RUNNING = "AffinityGeo isn't running. Call app_launch first.";

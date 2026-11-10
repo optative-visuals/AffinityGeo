@@ -9,6 +9,7 @@ import { GITHUB_URL, IPC, type AppSettings, type ThemeMode } from "../shared/geo
 import { pushRecent } from "../shared/recent.js";
 import { cleanSettings, mergeSettings } from "../shared/settings.js";
 import { closeGuard } from "./closeGuard.js";
+import { fixtureOptions } from "./fixtures.js";
 import { windowOpenAction } from "./links.js";
 import { listenWithRetry } from "./listenRetry.js";
 import { writeJsonAtomic } from "./jsonFile.js";
@@ -196,7 +197,9 @@ function installScripts(): { home?: string; scripts?: { loaderPath: string; note
 async function start(): Promise<void> {
   try {
     // Install or update the Affinity scripts first, so Affinity always runs the version that matches this app.
-    const options = { port: PORT, uiDir: path.join(__dirname, "ui"), ...installScripts() };
+    // Development only: recorded map data instead of the internet (see fixtures.ts). A packaged app ignores it.
+    const fixtures = fixtureOptions(process.env, app.isPackaged, (f) => readFileSync(f, "utf8"));
+    const options = { port: PORT, uiDir: path.join(__dirname, "ui"), ...installScripts(), ...fixtures };
     // A just-closed AffinityGeo may still be releasing the port: wait up to 5 s before giving up.
     server = await listenWithRetry(() => startServer(options), {
       tries: 10, delayMs: 500, sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
