@@ -11,6 +11,7 @@ import type {
 } from "./types.js";
 
 const NOT_A_PROJECT = "This isn't an AffinityGeo project file.";
+const DAMAGED = "This project file is damaged and can't be opened.";
 const TOO_NEW = "This project was made by a newer AffinityGeo.";
 
 const ROLES: RoleId[] = ROLE_IDS;
@@ -100,16 +101,76 @@ export async function saveProject(path: string, project: Project, snap: ProjectS
   }
 }
 
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const isStr = (v: unknown): v is string => typeof v === "string";
+const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const isNums = (v: unknown, n: number): boolean => Array.isArray(v) && v.length === n && v.every(isNum);
+const isRing = (v: unknown): boolean => Array.isArray(v) && v.length >= 3 && v.every((pt) => isNums(pt, 2));
+const isArea = (v: unknown): boolean => isObj(v) && isNums(v.bboxWgs84, 4);
+
 /** A version 1 project (0.1.0): one area, no locations, data/<role>.json. Becomes one box location called "loc-1". */
 function migrateV1(project: Project): void {
   const old = project as unknown as { version: number; area: AreaSpec; maps: Project["maps"]; dataVersion: number; fetchedAt: string | null };
+  if (!isArea(old.area) || !Array.isArray(old.maps) || !old.maps.every(isObj)) throw new Error(DAMAGED);
+  const placeName = isStr(old.area.placeName) ? old.area.placeName : "";
   project.locations = [{
-    id: "loc-1", name: firstPart(old.area.placeName) || "Location 1", placeName: old.area.placeName,
+    id: "loc-1", name: firstPart(placeName) || "Location 1", placeName,
     kind: "box", ring: boxRing(old.area.bboxWgs84), contextM: 0,
-    dataVersion: old.dataVersion, fetchedAt: old.fetchedAt,
+    dataVersion: isNum(old.dataVersion) ? old.dataVersion : 0, fetchedAt: old.fetchedAt ?? null,
   }];
   for (const m of old.maps) { m.locationId = "loc-1"; m.showContext = false; }
   old.version = 2; // the area stays exactly as it was: no syncArea
+}
+
+/**
+ * Checks the shape of a (migrated) project so a hand-edited or damaged file gives one friendly error
+ * instead of a TypeError later. Optional newer fields that older files may lack are defaulted, not rejected.
+ */
+function validateProject(project: Project): void {
+  const bad = (): never => { throw new Error(DAMAGED); };
+  const p = project as unknown as Record<string, unknown>;
+  if (!isStr(p.id) || !isStr(p.name)) bad();
+  const area = p.area;
+  if (!isObj(area) || !isNums(area.bboxWgs84, 4) || !isStr(area.projectionId)) bad();
+  if (!isStr((area as Record<string, unknown>).placeName)) (area as Record<string, unknown>).placeName = "";
+
+  const locations = p.locations;
+  if (!Array.isArray(locations) || locations.length === 0) bad();
+  const ids = new Set<string>();
+  for (const l of locations as unknown[]) {
+    if (!isObj(l) || !isStr(l.id) || !isStr(l.name) || (l.kind !== "box" && l.kind !== "shape") ||
+        !isRing(l.ring) || !isNum(l.contextM)) bad();
+    const loc = l as Record<string, unknown>;
+    ids.add(loc.id as string);
+    if (!isStr(loc.placeName)) loc.placeName = loc.name;
+    if (!isNum(loc.dataVersion)) loc.dataVersion = 0;
+    if (!isStr(loc.fetchedAt)) loc.fetchedAt = null;
+  }
+
+  const sources = p.sources;
+  if (!isObj(sources) || !ROLES.every((r) => isObj(sources[r]) && isStr((sources[r] as Record<string, unknown>).kind))) bad();
+
+  const style = p.style;
+  if (!isObj(style) || !isObj(style.roles) || !ROLES.every((r) => isObj((style.roles as Record<string, unknown>)[r])) ||
+      !isObj(style.marker)) bad();
+
+  const maps = p.maps;
+  if (!Array.isArray(maps)) bad();
+  for (const m of maps as unknown[]) {
+    if (!isObj(m) || !isStr(m.id) || !isStr(m.name) || !isNums(m.centre, 2) || !isNum(m.scale) || !isNum(m.rotationDeg) ||
+        !isObj(m.sizeMm) || !isNum(m.sizeMm.width) || !isNum(m.sizeMm.height) ||
+        !isStr(m.locationId) || !ids.has(m.locationId)) bad();
+    const map = m as Record<string, unknown>;
+    if (typeof map.showContext !== "boolean") map.showContext = false;
+    if (typeof map.marker !== "boolean") map.marker = false; // a map with no marker setting drew none: keep that
+    if (map.target === undefined) map.target = null;
+    if (map.resizeArtboard === undefined) map.resizeArtboard = null;
+    if (map.sent === undefined) map.sent = null;
+  }
+
+  if (p.dataVersion === undefined) p.dataVersion = 0;
+  else if (!isNum(p.dataVersion)) bad();
+  if (p.fetchedAt === undefined) p.fetchedAt = null;
 }
 
 export async function loadProject(path: string): Promise<{ project: Project; snap: ProjectSnapshot }> {
@@ -128,25 +189,31 @@ export async function loadProject(path: string): Promise<{ project: Project; sna
       (typeof project.style.paper !== "string" || !/^#[0-9a-f]{6}$/i.test(project.style.paper))) {
     project.style.paper = paperFor(String(project.style.presetName));
   }
-  const read = (name: string): Dataset | undefined => {
-    const e = entries.find((x) => x.name === name);
-    return e ? JSON.parse(dec(e.data)) as Dataset : undefined;
-  };
   const wasV1 = project.version < 2;
   if (wasV1) migrateV1(project);
+  validateProject(project);
+  const read = (name: string, role: RoleId): Dataset | undefined => {
+    const e = entries.find((x) => x.name === name);
+    if (!e) return undefined;
+    try {
+      const ds = JSON.parse(dec(e.data)) as Dataset;
+      if (isObj(ds) && Array.isArray(ds.features)) return ds;
+    } catch { /* falls through to the friendly error */ }
+    throw new Error(`This project's data for '${role}' is damaged and can't be read.`);
+  };
   const snap: ProjectSnapshot = { locations: {}, files: {} };
   for (const loc of project.locations) snap.locations[loc.id] = {};
   for (const role of ROLES) {
-    const isFile = project.sources[role]?.kind === "file";
+    const isFile = project.sources[role].kind === "file";
     if (wasV1) {
-      const ds = read(`data/${role}.json`);
+      const ds = read(`data/${role}.json`, role);
       if (ds) (isFile ? snap.files : snap.locations["loc-1"]!)[role] = ds;
       continue;
     }
-    const fileDs = read(`files/${role}.json`);
+    const fileDs = read(`files/${role}.json`, role);
     if (fileDs) snap.files[role] = fileDs;
     for (const loc of project.locations) {
-      const ds = read(`data/${loc.id}/${role}.json`);
+      const ds = read(`data/${loc.id}/${role}.json`, role);
       if (ds) snap.locations[loc.id]![role] = ds;
     }
   }

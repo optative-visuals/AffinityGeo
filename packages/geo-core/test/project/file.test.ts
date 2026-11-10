@@ -119,6 +119,71 @@ describe("saveProject / loadProject", () => {
   });
 });
 
+describe("damaged project files", () => {
+  const DAMAGED = "This project file is damaged and can't be opened.";
+  const dir = tmp();
+  let n = 0;
+  const write = (entries: { name: string; data: Uint8Array }[]) => {
+    const path = join(dir, `d${++n}.afgeo`);
+    writeFileSync(path, writeZip(entries));
+    return path;
+  };
+  const withProject = (p: unknown, extra: { name: string; data: Uint8Array }[] = []) =>
+    write([{ name: "project.json", data: enc(p) }, ...extra]);
+  const broken = (edit: (p: Record<string, any>) => void) => {
+    const p = structuredClone(mk("Broken")) as unknown as Record<string, any>;
+    edit(p);
+    return p;
+  };
+
+  it("loads a project whose optional newer fields are missing", async () => {
+    const p = broken((x) => { delete x.fetchedAt; delete x.locations[0].placeName; delete x.locations[0].dataVersion; delete x.dataVersion; });
+    expect((await loadProject(withProject(p))).project.name).toBe("Broken");
+  });
+
+  const cases: [string, (p: Record<string, any>) => void][] = [
+    ["no locations", (p) => { delete p.locations; }],
+    ["empty locations", (p) => { p.locations = []; }],
+    ["locations not an array", (p) => { p.locations = {}; }],
+    ["no sources", (p) => { delete p.sources; }],
+    ["a role missing from sources", (p) => { delete p.sources.water; }],
+    ["no maps", (p) => { delete p.maps; }],
+    ["no style", (p) => { delete p.style; }],
+    ["style.roles missing a role", (p) => { delete p.style.roles.rail; }],
+    ["no marker style", (p) => { delete p.style.marker; }],
+    ["no area", (p) => { delete p.area; }],
+    ["a short bbox", (p) => { p.area.bboxWgs84 = [1, 2, 3]; }],
+    ["no projection", (p) => { delete p.area.projectionId; }],
+    ["a numeric name", (p) => { p.name = 5; }],
+    ["a location ring with two points", (p) => { p.locations[0].ring = [[0, 0], [1, 1]]; }],
+    ["a bad location kind", (p) => { p.locations[0].kind = "circle"; }],
+    ["a location without contextM", (p) => { delete p.locations[0].contextM; }],
+    ["a map without a centre", (p) => { p.maps = [{ ...map("a"), centre: [1] }]; }],
+    ["a map without sizeMm", (p) => { p.maps = [{ ...map("a"), sizeMm: undefined }]; }],
+    ["a map in an unknown location", (p) => { p.maps = [{ ...map("a"), locationId: "nope" }]; }],
+    ["a non-numeric dataVersion", (p) => { p.dataVersion = "3"; }],
+  ];
+  it.each(cases)("says the file is damaged for %s", async (_label, edit) => {
+    await expect(loadProject(withProject(broken(edit)))).rejects.toThrow(DAMAGED);
+  });
+
+  it("says the file is damaged for a v1 file without an area or maps", async () => {
+    const v1 = (edit: (p: Record<string, any>) => void) =>
+      broken((p) => { delete p.locations; p.version = 1; edit(p); });
+    await expect(loadProject(withProject(v1((p) => { delete p.area; })))).rejects.toThrow(DAMAGED);
+    await expect(loadProject(withProject(v1((p) => { delete p.maps; })))).rejects.toThrow(DAMAGED);
+  });
+
+  it("names the layer when a data entry is corrupt", async () => {
+    const msg = "This project's data for 'water' is damaged and can't be read.";
+    const bad = (name: string, data: Uint8Array) =>
+      withProject(mk("Broken"), [{ name, data }]);
+    await expect(loadProject(bad("data/loc-1/water.json", new TextEncoder().encode("{not json")))).rejects.toThrow(msg);
+    await expect(loadProject(bad("data/loc-1/water.json", enc({ name: "x" })))).rejects.toThrow(msg);
+    await expect(loadProject(bad("files/water.json", enc({ features: "no" })))).rejects.toThrow(msg);
+  });
+});
+
 describe("loading a v1 project", () => {
   const dir = tmp();
   const path = join(dir, "v1-hyde-park.afgeo");
