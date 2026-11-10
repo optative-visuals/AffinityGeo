@@ -15,6 +15,8 @@ export class DataError extends Error {
 export const USER_AGENT = "AffinityGeo/0.1.0 (+https://github.com/optative-visuals)";
 const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
 const BUSY = "OpenStreetMap is busy right now. Try again in a minute — your current data is unchanged.";
+const SLOW = "OpenStreetMap took too long to answer. Try again in a minute, or choose a smaller area — your current data is unchanged.";
+const OVERPASS_TIMEOUT_MS = 120_000;
 export { TOO_BIG, areaWarning };
 
 // ---- query ----
@@ -214,9 +216,19 @@ export function parseOverpass(json: unknown): Partial<Record<RoleId, Dataset>> {
 
 // ---- fetch ----
 
-export async function fetchOsm(area: FetchArea, fetchImpl: typeof fetch = fetch): Promise<Partial<Record<RoleId, Dataset>>> {
+/** True for the error an AbortSignal.timeout() raises (TimeoutError, or AbortError from some fetch layers). */
+export function isTimeoutError(e: unknown): boolean {
+  const name = (e as { name?: unknown } | null)?.name;
+  return name === "TimeoutError" || name === "AbortError";
+}
+
+export async function fetchOsm(
+  area: FetchArea, fetchImpl: typeof fetch = fetch, opts: { timeoutMs?: number } = {},
+): Promise<Partial<Record<RoleId, Dataset>>> {
   const km2 = "bbox" in area ? areaKm2(area.bbox) : ringAreaKm2(area.ring);
   if (km2 > MAX_KM2) throw new DataError(TOO_BIG);
+  // The query asks Overpass for at most 90 s; allow it a little longer, then stop waiting.
+  const signal = AbortSignal.timeout(opts.timeoutMs ?? OVERPASS_TIMEOUT_MS);
   let res: Response;
   try {
     // One request per refresh, no automatic retry: the public server asks us to go easy.
@@ -224,11 +236,14 @@ export async function fetchOsm(area: FetchArea, fetchImpl: typeof fetch = fetch)
       method: "POST",
       headers: { "User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded" },
       body: "data=" + encodeURIComponent(buildOverpassQuery(area)),
+      signal,
     });
-  } catch { throw new DataError(BUSY); }
-  if (!res.ok) throw new DataError(BUSY);
+  } catch (e) { throw new DataError(isTimeoutError(e) ? SLOW : BUSY); }
+  if (!res.ok) {
+    throw new DataError(res.status === 429 || res.status >= 500 ? BUSY : `OpenStreetMap refused the request (${res.status}). Your current data is unchanged.`);
+  }
   let json: unknown;
-  try { json = await res.json(); } catch { throw new DataError(BUSY); }
+  try { json = await res.json(); } catch (e) { throw new DataError(isTimeoutError(e) ? SLOW : BUSY); }
   // Overpass can answer 200 with a remark and a truncated result when it runs out of time or memory.
   const remark = (json as { remark?: unknown } | null)?.remark;
   if (typeof remark === "string" && /runtime error|timed out/i.test(remark)) throw new DataError(BUSY);

@@ -199,6 +199,41 @@ describe("fetchOsm", () => {
   });
 });
 
+describe("fetchOsm time limit and statuses", () => {
+  const TIMEOUT = "OpenStreetMap took too long to answer. Try again in a minute, or choose a smaller area — your current data is unchanged.";
+  const stalls = (async (_url: string, init: any) => new Promise((_, reject) => {
+    init.signal.addEventListener("abort", () => reject(init.signal.reason));
+  })) as unknown as typeof fetch;
+
+  it("passes an abort signal to fetch", async () => {
+    const f = fake(200);
+    await fetchOsm({ bbox: small }, f.impl);
+    expect(f.calls[0].init.signal).toBeInstanceOf(AbortSignal);
+  });
+  it("gives up with a clear message when the server stalls", async () => {
+    const err = await fetchOsm({ bbox: small }, stalls, { timeoutMs: 10 }).catch((e) => e);
+    expect(err).toBeInstanceOf(DataError);
+    expect(err.message).toBe(TIMEOUT);
+  });
+  it("gives up when the body stalls after the headers arrive", async () => {
+    const impl = (async (_url: string, init: any) => ({
+      ok: true, status: 200,
+      json: () => new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason))),
+    })) as unknown as typeof fetch;
+    await expect(fetchOsm({ bbox: small }, impl, { timeoutMs: 10 })).rejects.toThrow(TIMEOUT);
+  });
+  it("says it was refused, not busy, on other error statuses", async () => {
+    for (const status of [400, 403]) {
+      const err = await fetchOsm({ bbox: small }, fake(status).impl).catch((e) => e);
+      expect(err).toBeInstanceOf(DataError);
+      expect(err.message).toBe(`OpenStreetMap refused the request (${status}). Your current data is unchanged.`);
+    }
+  });
+  it("still says busy for 429 and 5xx", async () => {
+    for (const status of [429, 500, 503]) await expect(fetchOsm({ bbox: small }, fake(status).impl)).rejects.toThrow(BUSY);
+  });
+});
+
 describe("areaWarning", () => {
   // At 51.5N, 1 degree of latitude is ~111.2 km and of longitude ~69.3 km.
   const around = (km2: number): Bbox => {

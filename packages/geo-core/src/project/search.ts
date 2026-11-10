@@ -1,11 +1,13 @@
 // Ported from CavalryGeo (GPL-3.0-or-later), src/core/search.js: the Nominatim request path and response parsing.
 import type { Bbox, Geometry } from "../types.js";
-import { DataError, USER_AGENT } from "./osm.js";
+import { DataError, USER_AGENT, isTimeoutError } from "./osm.js";
 
 export interface PlaceResult { name: string; bboxWgs84: Bbox; centre: [number, number]; outline?: Geometry }
 
 const BASE = "https://nominatim.openstreetmap.org";
 const BUSY = "Place search is busy right now. Try again in a moment.";
+const SLOW = "Place search took too long. Try again in a moment.";
+const SEARCH_TIMEOUT_MS = 15_000;
 const MIN_GAP_MS = 1000; // Nominatim's usage policy: at most one request per second
 let lastCall = -Infinity;
 
@@ -34,18 +36,20 @@ export function parseSearch(json: unknown): PlaceResult[] {
 
 export async function searchPlaces(
   q: string, fetchImpl: typeof fetch = fetch, now: () => number = Date.now, sleep: (ms: number) => Promise<void> = realSleep,
+  timeoutMs: number = SEARCH_TIMEOUT_MS,
 ): Promise<PlaceResult[]> {
   const query = q.trim();
   if (!query) return [];
   const wait = lastCall + MIN_GAP_MS - now();
   if (wait > 0) await sleep(wait);
   lastCall = now();
+  const signal = AbortSignal.timeout(timeoutMs);
   let res: Response;
   try {
-    res = await fetchImpl(BASE + searchPath(query), { headers: { "User-Agent": USER_AGENT, Accept: "application/json" } });
-  } catch { throw new DataError(BUSY); }
+    res = await fetchImpl(BASE + searchPath(query), { headers: { "User-Agent": USER_AGENT, Accept: "application/json" }, signal });
+  } catch (e) { throw new DataError(isTimeoutError(e) ? SLOW : BUSY); }
   if (!res.ok) throw new DataError(BUSY);
   let json: unknown;
-  try { json = await res.json(); } catch { throw new DataError(BUSY); }
+  try { json = await res.json(); } catch (e) { throw new DataError(isTimeoutError(e) ? SLOW : BUSY); }
   return parseSearch(json);
 }
