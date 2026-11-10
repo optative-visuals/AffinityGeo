@@ -8,7 +8,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createApiClient } from "./apiClient.js";
 import { createDriver } from "./driver.js";
 import { appLaunch, appLogs, appQuit, appStatus } from "./tools/app.js";
-import { apiRequest } from "./tools/data.js";
+import { apiRequest, dialogAnswer, dialogNotes } from "./tools/data.js";
+import { uiClick, uiDrag, uiPress, uiScreenshot, uiSnapshot, uiType, uiWaitFor } from "./tools/ui.js";
 import { toMcpError, toMcpResult, type ToolContext, type ToolDef } from "./tool.js";
 
 export interface ServerHooks {
@@ -48,13 +49,17 @@ export function quietStdout(): () => void {
   return () => { Object.assign(console, { log, info, debug }); };
 }
 
-export const ALL_TOOLS: ToolDef[] = [appLaunch, appQuit, appStatus, appLogs, apiRequest];
+export const ALL_TOOLS: ToolDef[] = [
+  appLaunch, appQuit, appStatus, appLogs,
+  uiSnapshot, uiScreenshot, uiClick, uiType, uiPress, uiDrag, uiWaitFor,
+  apiRequest, dialogAnswer,
+];
 
 async function main(): Promise<void> {
   quietStdout();
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
   const driver = createDriver(repoRoot);
-  const server = createServer({ driver, api: createApiClient() }, ALL_TOOLS);
+  const server = createServer({ driver, api: createApiClient() }, ALL_TOOLS, { after: () => dialogNotes(driver) });
   // Never leave a test copy of the app running once Claude has gone.
   let stopping = false;
   const stop = () => {

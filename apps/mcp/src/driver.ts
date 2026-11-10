@@ -8,6 +8,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { _electron, type ElectronApplication, type Page } from "playwright-core";
+import { installDialogStub } from "./dialogStub.js";
 import { ToolError } from "./tool.js";
 
 export interface LaunchOptions { build: boolean; fixtures: boolean }
@@ -115,6 +116,13 @@ export function createDriver(repoRoot: string, deps: { spawnBuild?: (cwd: string
         });
         const page = await app.firstWindow({ timeout: START_TIMEOUT_MS });
         await page.waitForLoadState("domcontentloaded");
+// tsx wraps nested functions in a __name() helper that the app's processes don't have: give them one,
+        // so functions sent across (the dialog stub, page scripts) run there.
+        await app.evaluate("globalThis.__name ??= (f) => f");
+        await page.evaluate("globalThis.__name ??= (f) => f");
+        // Nobody is there to click a native dialog: answer them from a queue instead (see dialog_answer).
+        // The cast: the stub only needs the dialog module, which Playwright types as the whole of Electron.
+        await app.evaluate(installDialogStub as never);
         const logsDir = await app.evaluate(({ app: a }) => a.getPath("logs"));
 
         const consoleErrors: string[] = [];
