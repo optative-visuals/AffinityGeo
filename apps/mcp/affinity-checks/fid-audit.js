@@ -1,5 +1,5 @@
 // Counts the objects AffinityGeo drew (geo:fid tags) per layer, and lists any id that appears twice in one map (a duplicated or copied object) or has no geo:sent record.
-// Not yet confirmed live.
+// Confirmed live against a sent map, 10 Nov 2026 (Affinity 3, Windows).
 report(doc && (function () {
   let total = 0, withoutSent = 0;
   const byLayer = {};

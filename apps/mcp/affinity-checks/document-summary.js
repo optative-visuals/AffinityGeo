@@ -1,5 +1,5 @@
 // A first look at the current Affinity document: artboards, top-level layers and how many objects AffinityGeo drew.
-// Not yet confirmed live.
+// Confirmed live against a sent map, 10 Nov 2026 (Affinity 3, Windows).
 report(doc && (function () {
   let tagged = 0, masks = 0;
   const top = roots().map(function (n) {

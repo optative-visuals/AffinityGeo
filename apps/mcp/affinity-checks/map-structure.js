@@ -1,5 +1,5 @@
 // The layer structure of every map AffinityGeo has drawn: its frame group, data layers in order, the Location group and whether it has a real mask, and the Surrounding context group.
-// Not yet confirmed live.
+// Confirmed live against a sent map, 10 Nov 2026 (Affinity 3, Windows).
 report(doc && (function () {
   function layer(n) {
     return {
