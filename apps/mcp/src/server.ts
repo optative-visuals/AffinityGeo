@@ -7,6 +7,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createApiClient } from "./apiClient.js";
 import { createDriver } from "./driver.js";
+import { affinityCheck } from "./tools/affinity.js";
 import { appLaunch, appLogs, appQuit, appStatus } from "./tools/app.js";
 import { apiRequest, dialogAnswer, dialogNotes } from "./tools/data.js";
 import { uiClick, uiDrag, uiPress, uiScreenshot, uiSnapshot, uiType, uiWaitFor } from "./tools/ui.js";
@@ -52,7 +53,7 @@ export function quietStdout(): () => void {
 export const ALL_TOOLS: ToolDef[] = [
   appLaunch, appQuit, appStatus, appLogs,
   uiSnapshot, uiScreenshot, uiClick, uiType, uiPress, uiDrag, uiWaitFor,
-  apiRequest, dialogAnswer,
+  apiRequest, dialogAnswer, affinityCheck,
 ];
 
 async function main(): Promise<void> {
