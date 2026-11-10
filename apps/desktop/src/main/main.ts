@@ -1,5 +1,5 @@
 // The Electron main process: one window on the companion server, which runs in this process.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import { autoUpdater } from "electron-updater";
@@ -11,7 +11,8 @@ import { cleanSettings, mergeSettings } from "../shared/settings.js";
 import { closeGuard } from "./closeGuard.js";
 import { windowOpenAction } from "./links.js";
 import { listenWithRetry } from "./listenRetry.js";
-import { fileLogger } from "./log.js";
+import { writeJsonAtomic } from "./jsonFile.js";
+import { captureConsole, fileLogger, formatLogArgs } from "./log.js";
 import { appMenuTemplate } from "./menu.js";
 import { ensureScripts, scriptsNote, scriptsSource, scriptsVersion } from "./scripts.js";
 import { installOnClose, installUpdate, shouldRunUpdater, startUpdater, updaterLogger } from "./updater.js";
@@ -32,6 +33,23 @@ let restartToUpdate: (() => void) | null = null;
 let updateReady: string | null = null;
 
 const log = fileLogger(() => app.getPath("logs"));
+// The installed app has no console: console.error and console.warn (ours, and the companion server's) also go to main.log.
+captureConsole(log);
+
+let crashing = false;
+process.on("uncaughtException", (e) => {
+  log(`[uncaughtException] ${formatLogArgs([e])}`);
+  // The app may be half-broken after this, so say so once and quit rather than carry on silently.
+  if (crashing) return;
+  crashing = true;
+  if (app.isReady()) {
+    try { dialog.showErrorBox("AffinityGeo", `AffinityGeo hit an unexpected error and will close.\n\n${e instanceof Error ? e.message : String(e)}`); } catch { /* the log has it */ }
+  }
+  app.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  log(`[unhandledRejection] ${formatLogArgs([reason])}`);
+});
 
 const recentFile = () => path.join(app.getPath("userData"), "recent.json");
 
@@ -46,8 +64,7 @@ function readRecent(): string[] {
 
 function writeRecent(list: string[]): void {
   try {
-    mkdirSync(path.dirname(recentFile()), { recursive: true });
-    writeFileSync(recentFile(), JSON.stringify(list, null, 2));
+    writeJsonAtomic(recentFile(), list);
   } catch (e) {
     console.error("Couldn't save the recent projects list:", e);
   }
@@ -65,8 +82,7 @@ function readSettings(): AppSettings {
 
 function writeSettings(s: AppSettings): void {
   try {
-    mkdirSync(path.dirname(settingsFile()), { recursive: true });
-    writeFileSync(settingsFile(), JSON.stringify(s, null, 2));
+    writeJsonAtomic(settingsFile(), s);
   } catch (e) {
     console.error("Couldn't save the settings:", e);
   }
