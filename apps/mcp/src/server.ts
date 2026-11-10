@@ -1,7 +1,14 @@
 // The AffinityGeo test MCP server: lets Claude launch and drive a development copy of AffinityGeo.
 // Developer tooling only; nothing here is part of the released app.
 // Run: node --import tsx apps/mcp/src/server.ts (Claude Code starts it from .mcp.json).
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { createApiClient } from "./apiClient.js";
+import { createDriver } from "./driver.js";
+import { appLaunch, appLogs, appQuit, appStatus } from "./tools/app.js";
+import { apiRequest } from "./tools/data.js";
 import { toMcpError, toMcpResult, type ToolContext, type ToolDef } from "./tool.js";
 
 export interface ServerHooks {
@@ -39,4 +46,31 @@ export function quietStdout(): () => void {
   const { log, info, debug } = console;
   console.log = console.info = console.debug = (...args: unknown[]) => console.error(...args);
   return () => { Object.assign(console, { log, info, debug }); };
+}
+
+export const ALL_TOOLS: ToolDef[] = [appLaunch, appQuit, appStatus, appLogs, apiRequest];
+
+async function main(): Promise<void> {
+  quietStdout();
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+  const driver = createDriver(repoRoot);
+  const server = createServer({ driver, api: createApiClient() }, ALL_TOOLS);
+  // Never leave a test copy of the app running once Claude has gone.
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    void driver.quit().finally(() => process.exit(0));
+  };
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+  process.stdin.on("close", stop);
+  await server.connect(new StdioServerTransport());
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
 }
