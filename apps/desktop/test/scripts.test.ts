@@ -36,15 +36,45 @@ describe("ensureScripts", () => {
     expect(readFileSync(f, "utf8").trim()).toBe('module.exports = "1.1.0";');
   });
 
-  it("same version leaves the folder alone", () => {
+  it("same version and identical files leaves the folder alone", () => {
     ensureScripts(home, { dir: src }, "1.0.0");
-    const f = path.join(home, "affinity", "connect.js");
+    const dest = path.join(home, "affinity");
     const old = new Date("2020-01-01T00:00:00Z");
-    utimesSync(f, old, old);
-    writeFileSync(path.join(src, "connect.js"), "// changed");
+    for (const n of ["connect.js", "plan.js", "version.js", "VERSION"]) utimesSync(path.join(dest, n), old, old);
+    writeFileSync(path.join(dest, "My map.af"), "mine");
     expect(ensureScripts(home, { dir: src }, "1.0.0")).toEqual({ status: "current" });
-    expect(statSync(f).mtimeMs).toBe(old.getTime());
-    expect(readFileSync(f, "utf8")).toBe("// connect");
+    for (const n of ["connect.js", "plan.js", "version.js", "VERSION"]) expect(statSync(path.join(dest, n)).mtimeMs).toBe(old.getTime());
+    expect(readFileSync(path.join(dest, "My map.af"), "utf8")).toBe("mine");
+  });
+
+  it("same version but an edited source script re-copies it and reports an update", () => {
+    ensureScripts(home, { dir: src }, "1.0.0");
+    const dest = path.join(home, "affinity");
+    writeFileSync(path.join(dest, "My map.af"), "mine");
+    writeFileSync(path.join(src, "connect.js"), "// changed");
+    expect(ensureScripts(home, { dir: src }, "1.0.0")).toEqual({ status: "updated" });
+    expect(readFileSync(path.join(dest, "connect.js"), "utf8")).toBe("// changed");
+    expect(readFileSync(path.join(dest, "My map.af"), "utf8")).toBe("mine");
+    expect(ensureScripts(home, { dir: src }, "1.0.0")).toEqual({ status: "current" });
+  });
+
+  it("same version but an installed script deleted repairs it and reports an update", () => {
+    ensureScripts(home, { dir: src }, "1.0.0");
+    const f = path.join(home, "affinity", "plan.js");
+    rmSync(f);
+    expect(ensureScripts(home, { dir: src }, "1.0.0")).toEqual({ status: "updated" });
+    expect(readFileSync(f, "utf8")).toBe("// plan");
+  });
+
+  it("same version but a wrong or missing version.js repairs it and reports an update", () => {
+    ensureScripts(home, { dir: src }, "1.0.0");
+    const f = path.join(home, "affinity", "version.js");
+    writeFileSync(f, 'module.exports = "0.0.1";\n');
+    expect(ensureScripts(home, { dir: src }, "1.0.0")).toEqual({ status: "updated" });
+    expect(readFileSync(f, "utf8").trim()).toBe('module.exports = "1.0.0";');
+    rmSync(f);
+    expect(ensureScripts(home, { dir: src }, "1.0.0")).toEqual({ status: "updated" });
+    expect(existsSync(f)).toBe(true);
   });
 
   it("a newer app version rewrites the scripts and reports it", () => {
@@ -72,6 +102,15 @@ describe("ensureScripts", () => {
     writeFileSync(path.join(src, "connect.js"), "// changed");
     expect(ensureScripts(home, { dir: src }, "1.0.0", { force: true }).status).toBe("updated");
     expect(readFileSync(path.join(home, "affinity", "connect.js"), "utf8")).toBe("// changed");
+  });
+
+  it("force on an identical install still copies but reports current", () => {
+    ensureScripts(home, { dir: src }, "1.0.0");
+    const f = path.join(home, "affinity", "connect.js");
+    const old = new Date("2020-01-01T00:00:00Z");
+    utimesSync(f, old, old);
+    expect(ensureScripts(home, { dir: src }, "1.0.0", { force: true })).toEqual({ status: "current" });
+    expect(statSync(f).mtimeMs).not.toBe(old.getTime());
   });
 
   it("an unwritable home reports the reason and does not throw", () => {
