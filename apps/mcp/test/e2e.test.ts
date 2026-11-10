@@ -23,6 +23,11 @@ let projectFile = "";
 
 /** Runs a tool as the server would: arguments checked and defaulted by its input schema first. */
 const call = (tool: ToolDef, args: Record<string, unknown> = {}): Promise<ToolResult> => tool.run(ctx, z.object(tool.input).parse(args));
+/** The Getting started panel shows on a first run unless Affinity is already connected: close it when it is there. */
+async function dismissFirstRun(): Promise<void> {
+  const skip = driver.page().getByRole("button", { name: "Skip for now" });
+  try { await skip.click({ timeout: 3000 }); } catch { /* not shown */ }
+}
 const project = async () => ((await call(appStatus)).json as { project: { open: boolean; name?: string; dirty?: boolean } }).project;
 
 const api = ctx.api;
@@ -61,7 +66,7 @@ describe.skipIf(process.env.GEO_E2E !== "1")("driving the window", { timeout: 12
     scratch = mkdtempSync(path.join(os.tmpdir(), "affinitygeo-e2e-"));
     projectFile = path.join(scratch, "hyde-park.afgeo");
     await driver.launch({ build: true, fixtures: true });
-    await call(uiClick, { target: { role: "button", name: "Skip for now" } });
+    await dismissFirstRun();
   }, 90_000);
   afterAll(async () => {
     await driver.quit();
@@ -152,7 +157,7 @@ describe.skipIf(process.env.GEO_E2E !== "1")("driving the window", { timeout: 12
   it("opens the saved project through a queued Open dialog after a restart", async () => {
     await driver.quit();
     await driver.launch({ build: false, fixtures: true });
-    await call(uiClick, { target: { role: "button", name: "Skip for now" } });
+    await dismissFirstRun();
     expect((await project()).open).toBe(false);
     await call(dialogAnswer, { kind: "open", path: projectFile });
     await call(uiClick, { target: { role: "button", name: "Open…" } });

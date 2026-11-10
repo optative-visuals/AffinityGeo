@@ -2,13 +2,14 @@
 // The copy is the development build (apps/desktop/dist), run in a throwaway profile folder so the
 // designer's own recent projects and settings are never touched.
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { _electron, type ElectronApplication, type Page } from "playwright-core";
 import { installDialogStub } from "./dialogStub.js";
+import { exitWhenParentGone } from "./mainHooks.js";
 import { ToolError } from "./tool.js";
 
 export interface LaunchOptions { build: boolean; fixtures: boolean }
@@ -33,6 +34,25 @@ export const PORT_BUSY = `Port ${APP_PORT} is in use. Close your own AffinityGeo
 const START_TIMEOUT_MS = 30_000;
 const QUIT_TIMEOUT_MS = 5000;
 const MAX_CONSOLE_ERRORS = 200;
+const PROFILE_PREFIX = "affinitygeo-test-";
+/** How often the test copy checks that this server is still there. */
+const PARENT_CHECK_MS = 2000;
+
+/**
+ * Removes test profiles a stopped run left behind in `tmpDir`, and returns their names. Only call it when
+ * no test copy is running (port 8790 free): a profile in use must stay.
+ */
+export function removeStaleProfiles(tmpDir: string): string[] {
+  const removed: string[] = [];
+  let names: string[];
+  try { names = readdirSync(tmpDir); } catch { return removed; }
+  for (const name of names) {
+    if (!name.startsWith(PROFILE_PREFIX)) continue;
+    try { rmSync(path.join(tmpDir, name), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); removed.push(name); }
+    catch { /* still locked: leave it for next time */ }
+  }
+  return removed;
+}
 
 /** True when nothing is listening on the port. */
 export function portFree(port: number, host = "127.0.0.1"): Promise<boolean> {
@@ -99,7 +119,9 @@ export function createDriver(repoRoot: string, deps: { spawnBuild?: (cwd: string
         if (!existsSync(path.join(repoRoot, "apps/desktop/dist/main.cjs"))) {
           throw new ToolError("AffinityGeo hasn't been built yet. Launch with build: true.");
         }
-        profile = mkdtempSync(path.join(os.tmpdir(), "affinitygeo-test-"));
+        // The port is free, so no test copy is running: any profile still here was left by a stopped run.
+        removeStaleProfiles(os.tmpdir());
+        profile = mkdtempSync(path.join(os.tmpdir(), PROFILE_PREFIX));
         const env: Record<string, string> = {};
         for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
         delete env.AFFINITYGEO_FIXTURE_OSM;
@@ -123,6 +145,8 @@ export function createDriver(repoRoot: string, deps: { spawnBuild?: (cwd: string
         // Nobody is there to click a native dialog: answer them from a queue instead (see dialog_answer).
         // The cast: the stub only needs the dialog module, which Playwright types as the whole of Electron.
         await app.evaluate(installDialogStub as never);
+        // If this server is stopped abruptly it can't close the app: the app watches for that and closes itself.
+        await app.evaluate(exitWhenParentGone as never, { pid: process.pid, everyMs: PARENT_CHECK_MS });
         const logsDir = await app.evaluate(({ app: a }) => a.getPath("logs"));
 
         const consoleErrors: string[] = [];
@@ -141,7 +165,8 @@ export function createDriver(repoRoot: string, deps: { spawnBuild?: (cwd: string
         });
         current = mine;
       } catch (e) {
-        if (app) { try { await app.close(); } catch { /* already gone */ } }
+        // Kill, not close: a half-started app may be showing a dialog nobody can answer.
+        if (app) { try { app.process().kill(); } catch { /* already gone */ } }
         if (profile && !current) removeProfile(profile);
         if (e instanceof ToolError) throw e;
         throw new ToolError(`AffinityGeo couldn't start: ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
