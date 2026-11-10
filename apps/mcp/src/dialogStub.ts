@@ -64,5 +64,5 @@ export function takeUnanswered(): UnansweredDialog[] {
 export function unansweredNote(d: UnansweredDialog): string {
   return d.kind === "error"
     ? `The app showed an error box: ${d.title}`
-    : `A ${d.kind} dialog ("${d.title}") opened with no answer queued and was cancelled. Queue one with dialog_answer first.`;
+    : `${d.kind === "open" ? "An" : "A"} ${d.kind} dialog ("${d.title}") opened with no answer queued and was cancelled. Queue one with dialog_answer first.`;
 }

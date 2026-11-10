@@ -78,7 +78,7 @@ describe("the dialog stub", () => {
   });
   it("words the notes", () => {
     expect(unansweredNote({ kind: "open", title: "Open project" }))
-      .toBe('A open dialog ("Open project") opened with no answer queued and was cancelled. Queue one with dialog_answer first.');
+      .toBe('An open dialog ("Open project") opened with no answer queued and was cancelled. Queue one with dialog_answer first.');
     expect(unansweredNote({ kind: "error", title: "AffinityGeo: Port 8790 is in use." })).toBe("The app showed an error box: AffinityGeo: Port 8790 is in use.");
   });
 });
@@ -103,7 +103,7 @@ describe("dialog_answer and the notes", () => {
   it("turns unanswered dialogs into notes, once", async () => {
     const { driver } = ctxWith(true);
     await e.dialog.showOpenDialog!({}, { title: "Open project" });
-    expect(await dialogNotes(driver)).toEqual(['A open dialog ("Open project") opened with no answer queued and was cancelled. Queue one with dialog_answer first.']);
+    expect(await dialogNotes(driver)).toEqual(['An open dialog ("Open project") opened with no answer queued and was cancelled. Queue one with dialog_answer first.']);
     expect(await dialogNotes(driver)).toEqual([]);
   });
   it("has no notes when the app isn't running", async () => {
