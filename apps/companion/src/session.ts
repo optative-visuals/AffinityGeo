@@ -232,10 +232,17 @@ function checkCentre(v: unknown): [number, number] {
   return [v[0], v[1]];
 }
 
+const SIZE_MIN_MM = 10;
+const SIZE_MAX_MM = 5000;
+const ROTATION_MAX_DEG = 3600;
+
 function checkSize(v: unknown): { width: number; height: number } {
   const s = v as { width?: unknown; height?: unknown } | null;
   if (!s || typeof s !== "object" || !isNum(s.width) || !isNum(s.height) || s.width <= 0 || s.height <= 0) {
     throw bad("The map size must be a width and height in millimetres.");
+  }
+  if (![s.width, s.height].every((n) => n >= SIZE_MIN_MM && n <= SIZE_MAX_MM)) {
+    throw bad("The map size must be from 10 to 5,000 mm on each side.");
   }
   return { width: s.width, height: s.height };
 }
@@ -714,6 +721,7 @@ export class ProjectSession {
           out.scale = v; break;
         case "rotationDeg":
           if (!isNum(v)) throw bad("The rotation must be a number of degrees.");
+          if (Math.abs(v) > ROTATION_MAX_DEG) throw bad("The rotation must be between -3,600 and 3,600 degrees.");
           out.rotationDeg = v; break;
         case "sizeMm": out.sizeMm = checkSize(v); break;
         case "marker":

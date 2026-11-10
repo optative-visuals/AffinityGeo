@@ -61,9 +61,9 @@ export async function startServer(opts: ServerOptions = {}): Promise<{ port: num
   // A job Affinity finished after the app stopped waiting. The API call already reported a
   // failure, so the result is only logged: a late sendMap is never recorded as sent (the next
   // send compares against the document again).
-  queue.onLateCompletion = (op, outcome) => {
+  queue.onLateCompletion = (job, outcome) => {
     const o = outcome as AffinityOutcome | null;
-    const what = op.op === "sendMap" ? `Sending '${op.job.mapName}'` : `A ${op.op} job`;
+    const what = job.op === "sendMap" ? `Sending '${job.mapName}'` : `A ${job.op} job`;
     console.log(`${what} finished in Affinity after the time limit (${o?.ok === false ? `it failed: ${o.error}` : "it worked"}). Send again to update AffinityGeo.`);
   };
 

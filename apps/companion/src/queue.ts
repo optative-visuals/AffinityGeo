@@ -37,6 +37,16 @@ export class AffinityWaitError extends Error {
   }
 }
 
+/** What a late-completion report needs to know about a job, without its payload. */
+export interface LateJobSummary { op: AffinityOp["op"]; mapName?: string | undefined }
+
+/** A copy of an op that keeps only what reports need: a sendMap's geometry can be megabytes. */
+function slim(op: AffinityOp): AffinityOp {
+  if (op.op !== "sendMap") return op;
+  const { context: _context, mask: _mask, ...job } = op.job;
+  return { ...op, job: { ...job, layers: [] }, sentIds: [] };
+}
+
 function stillMessage(op: AffinityOp | null): string {
   if (op?.op === "sendMap") return `Affinity is still drawing ${op.job.mapName}…`;
   if (op?.op === "selectOnMap") return "Affinity is still selecting the features…";
@@ -60,7 +70,7 @@ export class JobQueue {
   private jobs = new Map<string, Entry>();
 
   /** Called when Affinity finishes a job whose waiter already gave up (see waitFor). */
-  onLateCompletion: ((op: AffinityOp, result: unknown) => void) | null = null;
+  onLateCompletion: ((job: LateJobSummary, result: unknown) => void) | null = null;
 
   private lastPollAt: number | null = null;
   /** When Affinity last finished a job, i.e. became free to take the next one. */
@@ -72,6 +82,7 @@ export class JobQueue {
   }
 
   push(op: AffinityOp): string {
+    this.sweep(this.now());
     const id = `${this.runId}-${++this.counter}`;
     this.jobs.set(id, { id, op, leasedAt: null, done: false, waiters: [], abandoned: false, abandonedAt: null });
     return id;
@@ -108,14 +119,21 @@ export class JobQueue {
   next(): { id: string; op: AffinityOp } | null {
     const t = this.now();
     this.lastPollAt = t;
+    this.sweep(t);
     let found: Entry | null = null;
-    for (const e of [...this.jobs.values()]) {
-      if (e.abandoned && e.leasedAt !== null && t - (e.abandonedAt ?? t) >= ABANDONED_MS) { this.jobs.delete(e.id); continue; }
-      if (!found && !e.done && e.op && e.leasedAt === null) found = e;
+    for (const e of this.jobs.values()) {
+      if (!e.done && e.op && e.leasedAt === null) { found = e; break; }
     }
     if (!found) return null;
     found.leasedAt = t;
     return { id: found.id, op: found.op! };
+  }
+
+  /** Forget abandoned jobs whose late-completion window has passed. */
+  private sweep(t: number): void {
+    for (const e of [...this.jobs.values()]) {
+      if (e.abandoned && e.leasedAt !== null && t - (e.abandonedAt ?? t) >= ABANDONED_MS) this.jobs.delete(e.id);
+    }
   }
 
   /**
@@ -144,7 +162,7 @@ export class JobQueue {
     } else if (e.abandoned) {
       this.jobs.delete(id);
       if (op && this.onLateCompletion) {
-        try { this.onLateCompletion(op, result); } catch { /* never break the Affinity poll */ }
+        try { this.onLateCompletion({ op: op.op, mapName: op.op === "sendMap" ? op.job.mapName : undefined }, result); } catch { /* never break the Affinity poll */ }
       }
     } else {
       // Nobody is waiting yet: keep only the id and result until waitFor collects it.
@@ -173,7 +191,7 @@ export class JobQueue {
       const giveUp = (err: AffinityWaitError) => {
         clearInterval(timer);
         e.waiters = e.waiters.filter((w) => w !== onDone);
-        if (e.waiters.length === 0 && e.leasedAt !== null) { e.abandoned = true; e.abandonedAt = this.now(); }
+        if (e.waiters.length === 0 && e.leasedAt !== null) { e.abandoned = true; e.abandonedAt = this.now(); if (e.op) e.op = slim(e.op); }
         reject(err);
       };
       const timer = setInterval(() => {

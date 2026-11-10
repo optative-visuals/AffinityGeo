@@ -78,7 +78,7 @@ function intParam(url: URL, key: string, fallback: number, max: number): number 
   return n;
 }
 
-interface SendResult {
+export interface SendResult {
   mapId: string; ok: boolean;
   created?: number; updated?: number; removed?: number;
   keptEdited?: unknown[]; resized?: boolean; warnings?: string[];

@@ -2,8 +2,9 @@
 // Types only from geo-core and the companion: nothing node-only reaches the UI bundle.
 import type { LocationSpec, MapJob, MapSpec, PlaceResult, Project, ProjectStyle, Ring, RoleId, RoleSource } from "@affinitygeo/geo-core";
 import type { AreaPreview, MapStatus, NewMapInput, ProjectionOption, Targets } from "../../../companion/src/session.js";
+import type { SendResult } from "../../../companion/src/api.js";
 
-export type { AreaPreview, MapStatus, NewMapInput, ProjectionOption, Targets };
+export type { AreaPreview, MapStatus, NewMapInput, ProjectionOption, SendResult, Targets };
 export type Counts = Record<RoleId, number>;
 export type TargetDocument = Targets["documents"][number];
 
@@ -77,14 +78,6 @@ export interface MapStatusRow { mapId: string; status: MapStatus; outside: boole
 /** `location`: a location id; the first location when left out. */
 export interface FeaturesQuery { q?: string; offset?: number; limit?: number; sort?: string; dir?: "asc" | "desc"; location?: string }
 export interface FeatureRow { fid: string; name: string; attrs: Record<string, unknown> }
-export interface SendResult {
-  mapId: string; ok: boolean;
-  created?: number; updated?: number; removed?: number;
-  keptEdited?: unknown[]; resized?: boolean; warnings?: string[];
-  error?: string; needsResizeChoice?: true; artboardMm?: { width: number; height: number };
-  /** Set when part of the map's frame lies outside its location's data. */
-  outside?: true;
-}
 export interface ArtboardLink { docId: string; artboardIndex: number; artboardName: string }
 export interface ScriptsInfo { loader: string; home: string; installed: boolean; scriptsNote?: string | null }
 

@@ -152,6 +152,28 @@ describe("ProjectSession", () => {
     expect(s.project!.maps).toEqual([]);
   });
 
+  it("keeps map size and rotation within sensible bounds", () => {
+    const s = new ProjectSession();
+    s.create("Parkland", AREA, "Light");
+    const m = s.addMap({ name: "Entrance", centre: CENTRE });
+    expect(s.patchMap(m.id, { sizeMm: { width: 10, height: 5000 } }).sizeMm).toEqual({ width: 10, height: 5000 });
+    for (const sizeMm of [{ width: 9.9, height: 100 }, { width: 100, height: 5000.1 }, { width: 42000, height: 297 }, { width: 1e9, height: 1e9 }]) {
+      const e = err(() => s.patchMap(m.id, { sizeMm }));
+      expect(e.status).toBe(400);
+      expect(e.message).toBe("The map size must be from 10 to 5,000 mm on each side.");
+    }
+    expect(s.map(m.id).sizeMm).toEqual({ width: 10, height: 5000 });
+    // Any finite rotation up to ±3600 is kept as sent (not normalised: it feeds the change hash).
+    expect(s.patchMap(m.id, { rotationDeg: 370 }).rotationDeg).toBe(370);
+    expect(s.patchMap(m.id, { rotationDeg: -3600 }).rotationDeg).toBe(-3600);
+    for (const rotationDeg of [3600.5, -3601, 1e9]) {
+      const e = err(() => s.patchMap(m.id, { rotationDeg }));
+      expect(e.status).toBe(400);
+      expect(e.message).toMatch(/rotation.*3,600/);
+    }
+    expect(s.map(m.id).rotationDeg).toBe(-3600);
+  });
+
   it("merges style changes and checks them", () => {
     const s = new ProjectSession();
     s.create("Parkland", AREA, "Light");
