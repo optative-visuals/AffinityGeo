@@ -1,0 +1,16 @@
+{
+  "name": "@affinitygeo/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "description": "Developer-only MCP server that lets Claude launch and drive a test copy of AffinityGeo. Never shipped.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "node ../../node_modules/typescript-7/bin/tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "playwright-core": "1.65.0",
+    "zod": "4.6.7"
+  }
+}

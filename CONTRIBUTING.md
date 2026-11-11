@@ -25,6 +25,30 @@ npm run typecheck
 
 GitHub runs the same checks on every pull request, plus `npm run build:app`. Keep the tests green: add or update a test with any change in behaviour.
 
+## Testing with Claude
+
+`apps/mcp` is a small MCP server that lets Claude Code start a test copy of AffinityGeo, look at its window, click and type in it, and read its state. It is developer tooling only and is never part of the installer.
+
+Claude Code finds it through `.mcp.json` (server name `affinitygeo`) and asks you to approve it once. Two rules:
+
+- Close your own AffinityGeo window first. The test copy uses the same port (8790) and refuses to start while it is taken. It runs in a throwaway profile, so your recent projects and settings are never touched.
+- To test against Affinity as well, open Affinity, run Geo – Connect and close the Script Editor. Claude reads the document back through Affinity's own MCP server.
+
+| Tools | What they do |
+|---|---|
+| `app_launch`, `app_quit`, `app_status`, `app_logs` | Start and stop the test copy, and report on it. `fixtures: true` uses recorded Hyde Park data instead of the internet. |
+| `ui_snapshot`, `ui_screenshot` | Read the window as a list of controls, or as a picture. |
+| `ui_click`, `ui_type`, `ui_press`, `ui_drag`, `ui_wait_for` | Use the window. |
+| `api_request` | Call the app's local API directly. |
+| `dialog_answer` | Answer the next Open, Save or message box in advance (nobody is there to click it). |
+| `affinity_check` | Ready-made scripts that read an Affinity document back. |
+
+The server's own tests run with `npm test`. The tests that really open the app are skipped unless you ask for them:
+
+```
+GEO_E2E=1 npx vitest run apps/mcp/test/e2e.test.ts
+```
+
 ## Proposing a change
 
 1. Open an issue first for anything bigger than a small fix, so we can agree the approach.

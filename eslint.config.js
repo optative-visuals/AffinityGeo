@@ -14,6 +14,8 @@ export default tseslint.config(
       "apps/desktop/build/**",
       "assets/**",
       "spikes/**",
+      // Script fragments for Affinity, joined to a shared prelude when used (see apps/mcp/src/tools/affinity.ts).
+      "apps/mcp/affinity-checks/**",
     ],
   },
   js.configs.recommended,
