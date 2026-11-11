@@ -51,6 +51,27 @@ describe("searchPlaces", () => {
   });
 });
 
+describe("searchPlaces time limit", () => {
+  const TIMEOUT = "Place search took too long. Try again in a moment.";
+  it("passes an abort signal to fetch", async () => {
+    let signal: unknown;
+    const impl = (async (_u: string, init: any) => {
+      signal = init.signal;
+      return { ok: true, status: 200, json: async () => [] };
+    }) as unknown as typeof fetch;
+    await searchPlaces("x", impl, () => 1_100_000);
+    expect(signal).toBeInstanceOf(AbortSignal);
+  });
+  it("gives up with a clear message when the server stalls", async () => {
+    const impl = (async (_u: string, init: any) => new Promise((_, reject) => {
+      init.signal.addEventListener("abort", () => reject(init.signal.reason));
+    })) as unknown as typeof fetch;
+    const err = await searchPlaces("x", impl, () => 1_200_000, async () => {}, 10).catch((e) => e);
+    expect(err).toBeInstanceOf(DataError);
+    expect(err.message).toBe(TIMEOUT);
+  });
+});
+
 describe("outlines", () => {
   const poly = { type: "Polygon", coordinates: [[[-0.18, 51.50], [-0.14, 51.50], [-0.14, 51.52], [-0.18, 51.50]]] };
   const base = { lat: "51.51", lon: "-0.16", boundingbox: ["51.50", "51.52", "-0.18", "-0.14"], display_name: "X" };

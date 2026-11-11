@@ -3,12 +3,14 @@ import proj4 from "proj4";
 import { WGS84 } from "../crs.js";
 import { getProjection } from "../projections.js";
 import type { Bbox } from "../types.js";
-import type { AreaSpec, MapSpec } from "./types.js";
+import { fetchRing, pointInRing } from "./location.js";
+import type { AreaSpec, MapSpec, Project } from "./types.js";
 
 export { ROLE_IDS, ROLE_LABELS } from "./roles.js";
 export { PRESETS, PRESET_PAPER } from "./styles.js";
 export { suggestProjection, utmParams } from "../projections.js";
 export type { Bbox } from "../types.js";
+export * from "./location.js";
 export type { AreaSpec, MapSpec, ProjectStyle, RoleId } from "./types.js";
 
 export const MAX_KM2 = 25;
@@ -60,6 +62,15 @@ export function mapFrameCorners(
   // Rotation by -theta.
   const at = (dx: number, dy: number): [number, number] => [cx + dx * cos + dy * sin, cy - dx * sin + dy * cos];
   return [at(-hw, hh), at(hw, hh), at(hw, -hh), at(-hw, -hh)];
+}
+
+/** True when any corner of the map frame lies outside the area fetched for the map's location. */
+export function frameOutsideLocation(project: Project, map: MapSpec): boolean {
+  const loc = project.locations.find((l) => l.id === map.locationId);
+  if (!loc) return false;
+  const ring = fetchRing(loc);
+  const { inverse } = projector(project.area);
+  return mapFrameCorners(project.area, map).some((c) => !pointInRing(inverse(c), ring));
 }
 
 export const SCALE_MIN = 500;

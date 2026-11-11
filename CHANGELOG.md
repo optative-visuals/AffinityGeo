@@ -2,6 +2,15 @@
 
 All notable changes to AffinityGeo are listed here.
 
+## Unreleased
+
+- A project can now hold several locations. Each is a box or a custom shape with corners you can add and remove.
+- Edit locations over a street map (OpenFreeMap, with OpenStreetMap data) in the New project window and on the Area screen.
+- Each location can fetch a margin of surroundings, from 0 to 1000 m.
+- Each map belongs to one location.
+- In Affinity, a map is masked to its location's shape. Tick **Show surrounding context** to add the surroundings, faded, as an editable group.
+- Projects from 0.1.x open unchanged as one box location.
+
 ## 0.1.0 - 29 October 2026
 
 First release.

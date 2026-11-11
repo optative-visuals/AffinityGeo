@@ -163,6 +163,43 @@ describe("JobQueue", () => {
     q.next();
     expect(q.size()).toBe(0);
   });
+  it("drops the heavy payload of a sendMap job once its waiter gave up, keeping what the report needs", async () => {
+    const late: Array<{ op: string; mapName?: string | undefined }> = [];
+    const q = new JobQueue(() => Date.now(), { runMs: 1_000 });
+    q.onLateCompletion = (s) => { late.push(s); };
+    q.next();
+    const big = sendOp("Park map");
+    if (big.op === "sendMap") big.sentIds = ["a", "b"];
+    const id = q.push(big);
+    q.next();
+    const p = q.waitFor(id);
+    const assertion = expect(p).rejects.toThrow(/still drawing Park map/);
+    await vi.advanceTimersByTimeAsync(1_300);
+    await assertion;
+    const held = (q as unknown as { jobs: Map<string, { op: AffinityOp | null }> }).jobs.get(id)!.op;
+    expect(held?.op).toBe("sendMap");
+    if (held?.op === "sendMap") {
+      expect(held.job.layers).toEqual([]);
+      expect(held.sentIds).toEqual([]);
+      expect(held.job.mapName).toBe("Park map");
+    }
+    q.complete(id, { ok: true });
+    expect(late).toEqual([{ op: "sendMap", mapName: "Park map" }]);
+  });
+  it("sweeps expired abandoned jobs when a job is pushed, even if Affinity never polls again", async () => {
+    const q = new JobQueue(() => Date.now(), { runMs: 1_000 });
+    q.next();
+    const id = q.push(op(1));
+    q.next();
+    const p = q.waitFor(id).catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(1_300);
+    await p;
+    q.cancel(id);
+    expect(q.size()).toBe(1);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    q.push(op(2));
+    expect(q.size()).toBe(1);
+  });
   it("forgets a job once its result has been collected", async () => {
     const q = queue();
     q.next();
@@ -179,7 +216,7 @@ describe("JobQueue", () => {
     expect(q.complete(id2, 8)).toBe(false);
   });
   it("hands a completion that arrives after the waiter gave up to onLateCompletion", async () => {
-    const late: Array<[AffinityOp, unknown]> = [];
+    const late: Array<[{ op: string; mapName?: string | undefined }, unknown]> = [];
     const q = new JobQueue(() => Date.now(), { runMs: 1_000 });
     q.onLateCompletion = (o, r) => { late.push([o, r]); };
     q.next();
@@ -190,7 +227,7 @@ describe("JobQueue", () => {
     await vi.advanceTimersByTimeAsync(1_300);
     await assertion;
     expect(q.complete(id, { ok: true, result: 1 })).toBe(true);
-    expect(late).toEqual([[op(1), { ok: true, result: 1 }]]);
+    expect(late).toEqual([[{ op: "selectOnMap" }, { ok: true, result: 1 }]]);
     expect(q.size()).toBe(0);
   });
 });

@@ -263,7 +263,7 @@ describe("Style screen", () => {
   });
 
   it("focus fits the selected frame with a named padding", () => {
-    const map: MapSpec = { id: "m", name: "M", centre: [-0.155, 51.51], scale: 2500, rotationDeg: 0, sizeMm: { width: 420, height: 297 }, marker: true, target: null, resizeArtboard: null, sent: null };
+    const map: MapSpec = { id: "m", name: "M", centre: [-0.155, 51.51], scale: 2500, rotationDeg: 0, sizeMm: { width: 420, height: 297 }, marker: true, target: null, resizeArtboard: null, sent: null, locationId: "l1", showContext: false };
     const c = mapFrameCorners(area, map);
     const xs = c.map((q) => q[0]), ys = c.map((q) => q[1]);
     const [x0, y0, x1, y1] = focusBox(area, map)!;

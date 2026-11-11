@@ -6,6 +6,7 @@ import { PRESETS, projector, type AreaSpec, type MapSpec, type ProjectStyle } fr
 import { ApiFail, api, type SendResult, type TargetDocument } from "../src/ui/api.js";
 import { MapsScreen } from "../src/ui/maps/MapsScreen.js";
 import { clearThumbCache } from "../src/ui/maps/Gallery.js";
+import { patchMap } from "../src/ui/maps/status.js";
 import { MAP_DELETED, NOT_CONNECTED, NOT_CONNECTED_REST, PROJECT_CHANGED, STILL_DRAWING, getSendState, resetSend } from "../src/ui/maps/SendSummary.js";
 import { App, handleCloseRequest } from "../src/ui/App.js";
 import { platform } from "../src/ui/platform.js";
@@ -21,12 +22,18 @@ const W = 400, H = 300;
 
 const mk = (id: string, name: string, over: Partial<MapSpec> = {}): MapSpec => ({
   id, name, centre: [-0.155, 51.51], scale: 2500, rotationDeg: 0, sizeMm: { width: 420, height: 297 },
-  marker: true, target: null, resizeArtboard: null, sent: null, ...over,
+  marker: true, target: null, resizeArtboard: null, sent: null, locationId: "l1", showContext: false, ...over,
 });
 
 type Project = NonNullable<AppState["project"]>;
-const projectWith = (maps: MapSpec[]): Project =>
-  ({ id: "p1", name: "W", area, style, maps, dataVersion: 1, sources: {}, fetchedAt: null, version: 1 }) as unknown as Project;
+type Location = Project["locations"][number];
+const loc = (id: string, name: string, over: Partial<Location> = {}): Location => ({
+  id, name, placeName: "Hyde Park", kind: "box", ring: [[-0.17, 51.50], [-0.14, 51.50], [-0.14, 51.52], [-0.17, 51.52]],
+  contextM: 200, dataVersion: 1, fetchedAt: "2026-11-01T00:00:00Z", ...over,
+});
+/** Keeps the current project's locations unless told otherwise. */
+const projectWith = (maps: MapSpec[], locations: Location[] = current?.locations ?? [loc("l1", "Hyde Park")]): Project =>
+  ({ id: "p1", name: "W", area, style, maps, locations, dataVersion: 1, sources: {}, fetchedAt: null, version: 1 }) as unknown as Project;
 
 class Path2DStub { moveTo() {} lineTo() {} closePath() {} arc() {} rect() {} }
 
@@ -40,10 +47,10 @@ function fakeApi() {
     mapPreview: vi.spyOn(api, "mapPreview").mockImplementation(async (id) => ({
       mapId: id, mapName: id, projectId: "p1", sizeMm: { width: 420, height: 297 }, background: { fill: "#ffffff" }, layers: [], marker: null, hash: "h",
     })),
-    statuses: vi.spyOn(api, "statuses").mockImplementation(async () => Object.entries(getApp().statuses).map(([mapId, status]) => ({ mapId, status }))),
+    statuses: vi.spyOn(api, "statuses").mockImplementation(async () => Object.entries(getApp().statuses).map(([mapId, status]) => ({ mapId, status, outside: false }))),
     targets: vi.spyOn(api, "targets").mockImplementation(async () => ({ documents: getApp().targets })),
     addMap: vi.spyOn(api, "addMap").mockImplementation(async (input) => {
-      const m = mk("new", input.name, { centre: input.centre });
+      const m = mk("new", input.name, { centre: input.centre, locationId: input.locationId ?? "l1" });
       current = projectWith([...current.maps, m]);
       return m;
     }),
@@ -58,8 +65,8 @@ function fakeApi() {
   };
 }
 
-function start(maps: MapSpec[], patch: Partial<AppState> = {}) {
-  current = projectWith(maps);
+function start(maps: MapSpec[], patch: Partial<AppState> = {}, locations?: Location[]) {
+  current = projectWith(maps, locations ?? [loc("l1", "Hyde Park")]);
   resetApp({ project: current, connection: { connected: true, busy: false }, preview: { status: "none" }, ...patch });
   const fake = fakeApi();
   render(<MapsScreen />);
@@ -693,5 +700,85 @@ describe("pending debounced edits (final review)", () => {
     expect(fake.patchMap.mock.calls[0]![1]).toHaveProperty("scale");
     await act(async () => { await vi.advanceTimersByTimeAsync(400); });
     expect(fake.patchMap).toHaveBeenCalledTimes(1); // not sent twice
+  });
+});
+
+describe("maps belong to a location", () => {
+  const pr = projector(area);
+  const [aw, as, ae, an] = area.bboxWgs84;
+  const corners = [pr.forward([aw, as]), pr.forward([ae, as]), pr.forward([ae, an]), pr.forward([aw, an])];
+  const bounds = [Math.min(...corners.map((p) => p[0])), Math.min(...corners.map((p) => p[1])), Math.max(...corners.map((p) => p[0])), Math.max(...corners.map((p) => p[1]))] as [number, number, number, number];
+  const metres = (b: [number, number, number, number]) => [pr.forward([b[0], b[1]]), pr.forward([b[2], b[1]]), pr.forward([b[2], b[3]]), pr.forward([b[0], b[3]])];
+  const west: [number, number, number, number] = [-0.17, 51.50, -0.155, 51.52];
+  const east: [number, number, number, number] = [-0.155, 51.50, -0.14, 51.52];
+  const two = () => [loc("l1", "Hyde Park west"), loc("l2", "Hyde Park east")];
+  const ready = (): AppState["preview"] => ({
+    status: "ready",
+    data: { bounds, layers: [], locations: [
+      { id: "l1", name: "Hyde Park west", ring: metres(west), fetchRing: metres(west) },
+      { id: "l2", name: "Hyde Park east", ring: metres(east), fetchRing: metres(east) },
+    ] },
+  });
+
+  it("a new map goes to the location under the click", async () => {
+    const fake = start([], { preview: ready(), selectedLocationId: "l1" }, two());
+    fireEvent.click(screen.getByRole("button", { name: "+ Add map" }));
+    const canvas = screen.getByLabelText("Map view");
+    const [px, py] = toScreen(fit(bounds, W, H), W, H, pr.forward([-0.145, 51.51]));
+    fireEvent.pointerDown(canvas, { pointerId: 1, button: 0, clientX: px, clientY: py });
+    fireEvent.pointerUp(canvas, { pointerId: 1, button: 0, clientX: px, clientY: py });
+    await flush();
+    expect(fake.addMap).toHaveBeenCalledTimes(1);
+    expect(fake.addMap.mock.calls[0]![0].locationId).toBe("l2");
+  });
+
+  it("with several locations, the inspector names the map's location", () => {
+    start([mk("m1", "Library", { locationId: "l2" })], { selectedMapIds: ["m1"] }, two());
+    expect(screen.getByText("Hyde Park east")).toBeTruthy();
+  });
+
+  it("ticking Show surrounding context patches showContext", async () => {
+    const fake = start([mk("m1", "Library")], { selectedMapIds: ["m1"] });
+    expect(screen.getByText("Fades in the streets around the location. When it's off, the surroundings aren't sent to Affinity.")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Show surrounding context"));
+    await flush();
+    expect(fake.patchMap).toHaveBeenCalledWith("m1", { showContext: true });
+  });
+
+  it("the context checkbox is disabled for a box location with no margin", () => {
+    start([mk("m1", "Library")], { selectedMapIds: ["m1"] }, [loc("l1", "Hyde Park", { contextM: 0 })]);
+    expect((screen.getByLabelText("Show surrounding context") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByText("Add surrounding context to this location on the Area screen first.")).toBeTruthy();
+  });
+
+  it("a ticked context checkbox can still be unticked after the location's margin drops to 0", async () => {
+    const fake = start([mk("m1", "Library", { showContext: true })], { selectedMapIds: ["m1"] }, [loc("l1", "Hyde Park", { contextM: 0 })]);
+    const box = screen.getByLabelText("Show surrounding context") as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    expect(box.disabled).toBe(false);
+    fireEvent.click(box);
+    await flush();
+    expect(fake.patchMap).toHaveBeenCalledWith("m1", { showContext: false });
+  });
+
+  it("a map partly outside its location's data is flagged in the inspector and the Gallery, with Affinity disconnected", async () => {
+    // Library's frame hangs off the west edge of the location (and its 200 m margin); Lake's sits inside.
+    const fake = start([mk("m1", "Library", { centre: [-0.172, 51.51] }), mk("m2", "Lake")],
+      { selectedMapIds: ["m1"], connection: { connected: false, busy: false } });
+    fake.statuses.mockRejectedValue(new ApiFail(503, "not connected"));
+    expect(screen.getByText("Part of this map is outside its location's data.")).toBeTruthy();
+    act(() => { getActions().setView("gallery"); });
+    await flush();
+    expect(within(screen.getByRole("article", { name: "Library" })).getByLabelText("Part of this map is outside its location's data.")).toBeTruthy();
+    expect(within(screen.getByRole("article", { name: "Lake" })).queryByLabelText("Part of this map is outside its location's data.")).toBeNull();
+    expect(fake.statuses).not.toHaveBeenCalled();
+  });
+
+  it("the outside warning updates as soon as a patch moves the map back in", async () => {
+    start([mk("m1", "Library", { centre: [-0.172, 51.51] })], { selectedMapIds: ["m1"] });
+    expect(screen.getByText("Part of this map is outside its location's data.")).toBeTruthy();
+    await act(async () => { await patchMap("m1", { centre: [-0.155, 51.51] }); });
+    await flush();
+    expect(screen.queryByText("Part of this map is outside its location's data.")).toBeNull();
   });
 });

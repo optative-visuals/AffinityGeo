@@ -10,7 +10,7 @@ const W = 400, H = 300;
 const style = { presetName: "T", roles: {}, marker: {} } as unknown as ProjectStyle;
 const map = (id: string, centre: [number, number], rotationDeg = 0): MapSpec => ({
   id, name: id, centre, scale: 2500, rotationDeg, sizeMm: { width: 100, height: 100 },
-  marker: false, target: null, resizeArtboard: null, sent: null,
+  marker: false, target: null, resizeArtboard: null, sent: null, locationId: "l1", showContext: false,
 });
 
 class Path2DStub { moveTo() {} lineTo() {} closePath() {} arc() {} }
@@ -122,7 +122,7 @@ describe("MapCanvas paper", () => {
     const [x0, y0] = pr.forward([w, s]);
     const [x1, y1] = pr.forward([e, n]);
     const paperStyle = { presetName: "Light", paper: "#1d2a33", roles: {}, marker: {} } as unknown as ProjectStyle;
-    setup({ style: paperStyle, preview: { bounds: [x0, y0, x1, y1], layers: [] } });
+    setup({ style: paperStyle, preview: { bounds: [x0, y0, x1, y1], layers: [], locations: [] } });
     expect(fills).toContain("#1d2a33");
   });
 });
@@ -172,5 +172,70 @@ describe("MapCanvas resizing", () => {
     const [elon, elat] = pr.inverse(toWorld(zoomed, 400, 300, [300, 150]));
     expect(lon).toBeCloseTo(elon, 5);
     expect(lat).toBeCloseTo(elat, 5);
+  });
+});
+
+describe("MapCanvas locations", () => {
+  // The fetched area: a square 800 m across around the map's centre. The frame is 250 m across (100 mm at 1:2,500),
+  // so its centre can go at most 275 m from the middle before a corner leaves the square.
+  const centre: [number, number] = [-0.155, 51.51];
+  const located = () => {
+    const pr = projector(area);
+    const [cx, cy] = pr.forward(centre);
+    const sq = (r: number) => [[cx - r, cy - r], [cx + r, cy - r], [cx + r, cy + r], [cx - r, cy + r]];
+    const [w, s, e, n] = area.bboxWgs84;
+    const pts = [pr.forward([w, s]), pr.forward([e, s]), pr.forward([e, n]), pr.forward([w, n])];
+    const bounds = [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))] as [number, number, number, number];
+    return { pr, cx, cy, view: fit(bounds, W, H), preview: { bounds, layers: [], locations: [{ id: "l1", name: "Hyde Park", ring: sq(200), fetchRing: sq(400) }] } };
+  };
+  const drag = (canvas: HTMLElement, from: [number, number], steps: number[]) => {
+    fireEvent.pointerDown(canvas, { pointerId: 1, button: 0, clientX: from[0] + 2, clientY: from[1] });
+    for (const dx of steps) fireEvent.pointerMove(canvas, { pointerId: 1, clientX: from[0] + 2 + dx, clientY: from[1] });
+    fireEvent.pointerUp(canvas, { pointerId: 1, clientX: from[0] + 2 + steps[steps.length - 1]!, clientY: from[1] });
+  };
+  const movedTo = (props: MapCanvasProps) => (props.onMove as ReturnType<typeof vi.fn>).mock.calls[0]![1] as [number, number];
+
+  it("a frame dragged past its location's fetched area stops at the last centre that was inside", () => {
+    const { pr, cx, view, preview } = located();
+    const { props, canvas } = setup({ preview, maps: [map("m1", centre)] });
+    const [px, py] = toScreen(view, W, H, pr.forward(centre));
+    const mPerPx = toWorld(view, W, H, [1, 0])[0] - toWorld(view, W, H, [0, 0])[0];
+    const ok = Math.round(100 / mPerPx); // about 100 m east: still inside
+    drag(canvas, [px, py], [ok, ok * 3, ok * 10]); // then 300 m and 1 km: both outside
+    expect(props.onMove).toHaveBeenCalledTimes(1);
+    const [x] = pr.forward(movedTo(props));
+    expect(x - cx).toBeGreaterThan(50);
+    expect(x - cx).toBeLessThanOrEqual(275);
+  });
+
+  it("a frame already outside can be dragged back in, but not further out", () => {
+    const { pr, cx, cy, view, preview } = located();
+    const out = pr.inverse([cx + 350, cy]); // 75 m past the edge
+    const mPerPx = toWorld(view, W, H, [1, 0])[0] - toWorld(view, W, H, [0, 0])[0];
+    const step = Math.round(50 / mPerPx);
+
+    const a = setup({ preview, maps: [map("m1", out)] });
+    const [px, py] = toScreen(view, W, H, pr.forward(out));
+    drag(a.canvas, [px, py], [-step]);
+    expect(a.props.onMove).toHaveBeenCalledTimes(1);
+    expect(pr.forward(movedTo(a.props))[0] - cx).toBeLessThan(350);
+    cleanup();
+
+    const b = setup({ preview, maps: [map("m1", out)] });
+    drag(b.canvas, [px, py], [step]);
+    expect(b.props.onMove).not.toHaveBeenCalled();
+  });
+
+  it("draws each location's fetched outline dashed", () => {
+    const dashes: unknown[] = [];
+    const t: Record<string, unknown> = {};
+    const ctx = new Proxy(t, {
+      get: (o, k: string) => (k === "setLineDash" ? (d: number[]) => dashes.push(d) : k in o ? o[k] : () => undefined),
+      set: (o, k, v) => { o[k as string] = v; return true; },
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+    vi.stubGlobal("requestAnimationFrame", (cb: (t: number) => void) => { cb(0); return 0; });
+    setup({ preview: located().preview });
+    expect(dashes.some((d) => Array.isArray(d) && d.length > 0)).toBe(true);
   });
 });

@@ -15,9 +15,11 @@ vi.mock("../src/ui/map/MapCanvas.js", () => ({
 
 const area: AreaSpec = { placeName: "W", bboxWgs84: [-0.17, 51.50, -0.14, 51.52], projectionId: "bng" };
 type Project = NonNullable<AppState["project"]>;
-const map = (id: string, name: string): MapSpec => ({ id, name }) as unknown as MapSpec;
+const map = (id: string, name: string): MapSpec => ({ id, name, locationId: "loc-1" }) as unknown as MapSpec;
+const loc = (id: string, name: string) => ({ id, name, placeName: "", kind: "box", ring: [], contextM: 0, dataVersion: 1, fetchedAt: null });
 const project = (maps: MapSpec[]): Project =>
-  ({ id: "p1", name: "W", area, style: structuredClone(PRESETS[0]!), maps, dataVersion: 1, sources: {}, fetchedAt: null, version: 1 }) as unknown as Project;
+  ({ id: "p1", name: "W", area, style: structuredClone(PRESETS[0]!), maps, dataVersion: 1, sources: {}, fetchedAt: null, version: 2,
+    locations: [loc("loc-1", "Hyde Park")] }) as unknown as Project;
 
 const rows = (n: number) => Array.from({ length: n }, (_, i) => ({ fid: `f${i}`, name: `Building ${i}`, attrs: { area: i * 10, levels: 2, a3: 1, a4: 1, a5: 1, a6: 1, a7: "x" } }));
 
@@ -168,7 +170,7 @@ describe("Data screen filter caret", () => {
     fake.match.mockRejectedValue(new ApiFail(400, "bad", 9));
     await flush();
     await runFilter("  area > 5 wat");
-    expect(fake.match).toHaveBeenCalledWith("buildings", "area > 5 wat");
+    expect(fake.match).toHaveBeenCalledWith("buildings", "area > 5 wat", "loc-1");
     expect(screen.getByTestId("filter-echo").textContent).toBe("area > 5 wat\n         ^");
   });
 
@@ -225,6 +227,33 @@ describe("Data screen filter caret", () => {
     act(() => { setApp({ project: { ...getApp().project!, dataVersion: 2 } }); });
     await flush();
     expect(fake.features).toHaveBeenCalledTimes(1);
-    expect(fake.match).toHaveBeenCalledWith("buildings", "area > 100");
+    expect(fake.match).toHaveBeenCalledWith("buildings", "area > 100", "loc-1");
+  });
+});
+
+describe("Data screen locations", () => {
+
+  it("has no location picker with one location", async () => {
+    start();
+    await flush();
+    expect(screen.queryByLabelText("Location")).toBeNull();
+  });
+
+  it("with two locations, the picker passes the chosen location to the table and Select by attribute", async () => {
+    const fake = start();
+    vi.spyOn(api, "project").mockImplementation(async () => ({ project: getApp().project, dirty: false, counts: getApp().counts }));
+    act(() => { setApp({ project: { ...getApp().project!, locations: [loc("loc-1", "Hyde Park"), loc("loc-2", "Second park")] } as never }); });
+    await flush();
+    expect(fake.features).toHaveBeenLastCalledWith("buildings", expect.objectContaining({ location: "loc-1" }));
+    const picker = screen.getByLabelText("Location") as HTMLSelectElement;
+    expect([...picker.options].map((o) => o.textContent)).toEqual(["Hyde Park", "Second park"]);
+    fireEvent.change(picker, { target: { value: "loc-2" } });
+    await flush();
+    expect(getApp().selectedLocationId).toBe("loc-2");
+    expect(fake.features).toHaveBeenLastCalledWith("buildings", expect.objectContaining({ location: "loc-2", offset: 0 }));
+    await runFilter("area > 100");
+    expect(fake.match).toHaveBeenLastCalledWith("buildings", "area > 100", "loc-2");
+    // Only the chosen location's maps can take the selection.
+    expect(screen.getByLabelText("Map")).toHaveProperty("disabled", true);
   });
 });

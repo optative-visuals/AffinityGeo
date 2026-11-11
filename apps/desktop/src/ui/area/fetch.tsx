@@ -25,7 +25,7 @@ export function FetchPanel({ seconds }: { seconds: number }) {
   );
 }
 
-/** Runs api.refresh() and keeps the project in step. `run()` resolves true when the data arrived. */
+/** Runs api.refresh(locationId) and keeps the project in step. `run(id)` resolves true when the data arrived. */
 export function useFetchData() {
   const [state, setState] = useState<FetchState>({ status: "idle" });
   const [seconds, setSeconds] = useState(0);
@@ -38,13 +38,13 @@ export function useFetchData() {
     return () => clearInterval(id);
   }, [busy]);
 
-  async function run(): Promise<boolean> {
+  async function run(locationId: string): Promise<boolean> {
     started.current = Date.now();
     setSeconds(0);
     setState({ status: "busy" });
     let result: RefreshResult;
     try {
-      result = await api.refresh();
+      result = await api.refresh(locationId);
     } catch (e) {
       setState({ status: "error", message: message(e) });
       return false;

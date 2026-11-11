@@ -1,7 +1,7 @@
 // The app's shared state: one small store read with useApp(). Polling lives in useAppPolling(), mounted once by App.
 import { useEffect, useSyncExternalStore } from "react";
 import type { Project } from "@affinitygeo/geo-core";
-import { ApiFail, api, isNotConnected, type AreaPreview, type Counts, type MapStatus, type TargetDocument } from "./api.js";
+import { ApiFail, api, isNotConnected, type AreaPreview, type Counts, type MapStatus, type ProjectState, type TargetDocument } from "./api.js";
 import { platform } from "./platform.js";
 import { confirm } from "./shell/Confirm.js";
 import { toast } from "./shell/Toast.js";
@@ -15,7 +15,10 @@ export interface PreviewState { status: "loading" | "none" | "ready"; data?: Are
 export interface AppState {
   project: Project | null;
   dirty: boolean;
+  /** The selected location's feature counts. */
   counts: Counts | null;
+  /** The location the Area and Data screens show: the first one on load, and again when the selected one goes. */
+  selectedLocationId: string | null;
   /** Server statuses by map id (last known; kept while Affinity is away). */
   statuses: Record<string, MapStatus>;
   /** Open Affinity documents and their artboards (last known). */
@@ -31,13 +34,15 @@ export interface AppState {
 }
 
 export interface AppActions {
-  /** Re-reads the project, dirty flag and counts. Drops selected ids whose map is gone. */
+  /** Re-reads the project, dirty flag and the selected location's counts. Drops selected ids whose map or location is gone. */
   refreshProject(): Promise<void>;
   /** Re-reads map statuses and targets from Affinity. Quietly does nothing when Affinity isn't connected. */
   refreshStatuses(): Promise<void>;
   setScreen(screen: Screen): void;
   setView(view: View): void;
   select(ids: string[]): void;
+  /** Selects a location and re-reads the counts for it. */
+  selectLocation(id: string): void;
   /**
    * Re-reads the area preview. The status stays as it is until the reply ("none" doesn't flash to "loading" on a retry).
    * No data yet (409) gives "none"; any other failure also gives "none" (keeping data
@@ -55,7 +60,7 @@ export const SCREEN_LABELS: Record<Screen, string> = { area: "Area", maps: "Maps
 
 function initialState(): AppState {
   return {
-    project: null, dirty: false, counts: null, statuses: {}, targets: [],
+    project: null, dirty: false, counts: null, selectedLocationId: null, statuses: {}, targets: [],
     connection: { connected: false, busy: false }, connectionChecked: false,
     screen: "maps", view: "map", selectedMapIds: [], preview: { status: "loading" },
   };
@@ -86,13 +91,37 @@ function subscribe(l: () => void): () => void {
   return () => { listeners.delete(l); };
 }
 
+/** The project with one location's counts. A location that has gone (the server's 400) gives the first one's. */
+async function readProject(location: string | null): Promise<{ r: ProjectState; countsFor: string | null }> {
+  try {
+    return { r: await api.project(location ?? undefined), countsFor: location };
+  } catch (e) {
+    if (location === null || !(e instanceof ApiFail && e.status === 400)) throw e;
+    return { r: await api.project(), countsFor: null };
+  }
+}
+
 async function refreshProject(): Promise<void> {
-  const r = await api.project();
+  const first = await readProject(state.selectedLocationId);
+  let r = first.r;
+  const locations = r.project?.locations ?? [];
+  // Keep the selection while that location is still there (in the same project); otherwise the first location.
+  const keep = state.selectedLocationId;
+  const selectedLocationId = keep && r.project?.id === state.project?.id && locations.some((l) => l.id === keep)
+    ? keep : locations[0]?.id ?? null;
+  // The counts must be the selected location's (null asked for the first one's).
+  if ((first.countsFor ?? locations[0]?.id ?? null) !== selectedLocationId) r = (await readProject(selectedLocationId)).r;
   const ids = new Set(r.project?.maps.map((m) => m.id) ?? []);
   setApp({
-    project: r.project, dirty: r.dirty, counts: r.counts,
+    project: r.project, dirty: r.dirty, counts: r.counts, selectedLocationId,
     selectedMapIds: state.selectedMapIds.filter((id) => ids.has(id)),
   });
+}
+
+function selectLocation(id: string): void {
+  if (id === state.selectedLocationId) return;
+  setApp({ selectedLocationId: id });
+  void refreshProject().catch((e) => toast(e instanceof Error ? e.message : String(e), "error"));
 }
 
 async function refreshStatuses(): Promise<void> {
@@ -135,6 +164,7 @@ const actions: AppActions = {
   setScreen: (screen) => setApp({ screen }),
   setView: (view) => setApp({ view }),
   select: (ids) => setApp({ selectedMapIds: [...ids] }),
+  selectLocation,
   refreshPreview,
 };
 

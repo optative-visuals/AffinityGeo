@@ -7,7 +7,7 @@ const bbox = [-0.1715, 51.5023, -0.1615, 51.5077]; // west, south, east, north (
 const res = await fetch("https://overpass-api.de/api/interpreter", {
   method: "POST",
   headers: { "User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded" },
-  body: "data=" + encodeURIComponent(buildOverpassQuery(bbox)),
+  body: "data=" + encodeURIComponent(buildOverpassQuery({ bbox })),
 });
 if (!res.ok) throw new Error("Overpass answered " + res.status);
 const text = await res.text();

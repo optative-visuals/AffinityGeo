@@ -58,10 +58,17 @@ describe("release workflow", () => {
     expect(run).toContain("both package.json files");
   });
 
-  it("checks the tag first, then installs, tests, builds and publishes, in that order", () => {
+  it("never runs two releases for one tag at once, never cancels one, and can't hang for hours", () => {
+    expect(wf.concurrency).toEqual({ group: "release-${{ github.ref }}", "cancel-in-progress": false });
+    expect((job as Record<string, unknown>)["timeout-minutes"]).toBe(45);
+  });
+
+  it("checks the tag first, then installs, lints, type-checks, tests, builds and publishes, in that order", () => {
     const order = [
       job.steps.indexOf(tagCheck!),
       indexOf("npm ci"),
+      indexOf("npm run lint"),
+      indexOf("npm run typecheck"),
       indexOf("npm test"),
       indexOf("npm run build:app"),
       job.steps.indexOf(publish!),

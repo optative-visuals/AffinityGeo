@@ -34,6 +34,11 @@ describe("CI workflow", () => {
     expect(node).toBeLessThan(indexOf("npm ci"));
   });
 
+  it("cancels an older run when a newer push hits the same ref, and can't hang for hours", () => {
+    expect(wf.concurrency).toEqual({ group: "ci-${{ github.ref }}", "cancel-in-progress": true });
+    expect((job as Record<string, unknown>)["timeout-minutes"]).toBe(20);
+  });
+
   it("installs, lints, type-checks, tests and builds, in that order", () => {
     const order = ["npm ci", "npm run lint", "npm run typecheck", "npm test", "npm run build:app"].map(indexOf);
     expect(order.every((i) => i >= 0)).toBe(true);

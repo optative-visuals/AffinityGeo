@@ -3,10 +3,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import proj4 from "proj4";
 import { crsFromEpsg } from "../../src/crs.js";
+import { boxRing } from "../../src/project/location.js";
 import { newProject } from "../../src/project/file.js";
 import { buildMapJob } from "../../src/project/mapjob.js";
 import {
-  SCALE_MAX, SCALE_MIN, areaKm2, mapFrameCorners, projector, scaleToSlider, sliderToScale,
+  SCALE_MAX, SCALE_MIN, areaKm2, frameOutsideLocation, mapFrameCorners, projector, scaleToSlider, sliderToScale,
 } from "../../src/project/view.js";
 import type { Dataset } from "../../src/types.js";
 import type { AreaSpec, MapSpec } from "../../src/project/types.js";
@@ -33,8 +34,8 @@ describe("mapFrameCorners", () => {
   });
   it("the corners agree with buildMapJob", () => {
     const rotationDeg = -30;
-    const p = newProject("T", { placeName: "T", bboxWgs84: [-1, 51, 0, 52], projectionId: "bng" }, "Light");
-    p.maps.push({ id: "m1", name: "M", ...mk({ rotationDeg }), marker: false, target: null, resizeArtboard: null, sent: null });
+    const p = newProject("T", { placeName: "T", bboxWgs84: [-1, 51, 0, 52], projectionId: "bng" }, "Light", { name: "T", placeName: "T", kind: "box", ring: boxRing([-1, 51, 0, 52]), contextM: 0 });
+    p.maps.push({ id: "m1", name: "M", ...mk({ rotationDeg }), marker: false, target: null, resizeArtboard: null, sent: null, locationId: "loc-1", showContext: false });
     const [tl, tr, br] = mapFrameCorners(area, mk({ rotationDeg }));
     // A point 1 m inside the top-left corner, along the frame's own axes, as a one-point dataset.
     const u = [(tr![0] - tl![0]) / 1050, (tr![1] - tl![1]) / 1050];
@@ -45,7 +46,7 @@ describe("mapFrameCorners", () => {
       features: [{ fid: "f", name: "F", geometry: { type: "Point", coordinates: pt }, attrs: {} }],
       report: { read: 1, skipped: 0, reasons: [] },
     };
-    const job = buildMapJob(p, { poi: ds }, "m1");
+    const job = buildMapJob(p, { locations: { "loc-1": { poi: ds } }, files: {} }, "m1");
     const xy = job.layers[0]!.features[0]!.paths.flat();
     expect(xy[0]!).toBeCloseTo(0.4, 2); expect(xy[1]!).toBeCloseTo(0.4, 2);
   });
@@ -92,8 +93,24 @@ describe("view.ts stays browser-safe", () => {
     expect(text).not.toMatch(/require\(/);
   });
   it("imports only allowed modules", () => {
-    const allowed = new Set(["proj4", "./types.js", "./roles.js", "./styles.js", "../types.js", "../projections.js", "../crs.js"]);
+    const allowed = new Set(["proj4", "./types.js", "./roles.js", "./styles.js", "./location.js", "../types.js", "../projections.js", "../crs.js"]);
     const specs = [...text.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]!);
     for (const s of specs) expect(allowed.has(s), s).toBe(true);
+  });
+});
+
+describe("frameOutsideLocation", () => {
+  const ring: [number, number][] = [[-0.2, 51.47], [-0.12, 51.47], [-0.12, 51.53], [-0.2, 51.53]];
+  const project = newProject("T", { placeName: "T", bboxWgs84: [-0.2, 51.47, -0.12, 51.53], projectionId: "bng" }, "Light",
+    { name: "T", placeName: "T", kind: "shape", ring, contextM: 0 });
+  const spec = (centre: [number, number]): MapSpec => ({
+    id: "m", name: "M", centre, locationId: "loc-1", showContext: false, scale: 2500, rotationDeg: 0,
+    sizeMm: { width: 100, height: 100 }, marker: false, target: null, resizeArtboard: null, sent: null,
+  });
+  it("is true for a frame centred on the ring's edge", () => {
+    expect(frameOutsideLocation(project, spec([-0.2, 51.5]))).toBe(true);
+  });
+  it("is false at the centroid with a small frame", () => {
+    expect(frameOutsideLocation(project, spec([-0.16, 51.5]))).toBe(false);
   });
 });

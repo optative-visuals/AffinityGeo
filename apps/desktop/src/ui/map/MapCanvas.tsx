@@ -1,8 +1,9 @@
 // The Map view: the whole area drawn in the project style, with each map's frame and numbered pin on top.
 // Drag empty space to pan, wheel to zoom, drag a pin to move its map, drag the handle to rotate it.
+// Each location's fetched area is outlined dashed, and a frame can't be dragged out of its own location's.
 // Reused by the Maps screen, the Style screen's live preview and the Data screen's highlight.
 import { useEffect, useMemo, useRef, type PointerEvent as ReactPointerEvent } from "react";
-import { mapFrameCorners, projector, type AreaSpec, type MapSpec, type ProjectStyle } from "@affinitygeo/geo-core/view";
+import { mapFrameCorners, pointInRing, projector, type AreaSpec, type MapSpec, type ProjectStyle, type Ring } from "@affinitygeo/geo-core/view";
 import type { AreaPreview } from "../api.js";
 import { useApp } from "../store.js";
 import { drawArea, drawHighlight, drawMaps, paperColour, type Highlight } from "./draw.js";
@@ -23,7 +24,7 @@ export interface MapCanvasProps {
   highlight?: { role: Highlight["role"]; fids: string[] };
   onSelect(ids: string[]): void;
   onAdd(lonLat: LonLat): void;
-  /** Sent once, when a pin drag ends. */
+  /** Sent once, when a pin drag ends. The frame stays inside its location's fetched area (see `outsideBy`). */
   onMove(id: string, lonLat: LonLat): void;
   /** Sent once, when a handle drag ends: whole degrees (15° steps with Shift), −180 < deg ≤ 180. */
   onRotate(id: string, deg: number): void;
@@ -38,10 +39,37 @@ export interface MapCanvasProps {
 
 /** Pixels the pointer may wander before a press counts as a drag rather than a click. */
 const CLICK_SLOP_PX = 3;
+/** The fetched-area outlines: a long dash, so they don't read as a map frame. */
+const LOCATION_DASH = [8, 5];
+const LOCATION_INK = "rgba(120,130,140,0.9)";
+
+function segmentDistance(p: XY, a: readonly number[], b: readonly number[]): number {
+  const ax = a[0]!, ay = a[1]!, dx = b[0]! - ax, dy = b[1]! - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 ? Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / len2)) : 0;
+  return Math.hypot(p[0] - (ax + t * dx), p[1] - (ay + t * dy));
+}
+
+/**
+ * How far a frame's corners stick out of a ring, in projected metres: the sum, over the corners outside,
+ * of each one's distance to the ring's edge. 0 when every corner is inside.
+ */
+export function outsideBy(corners: readonly XY[], ring: readonly number[][]): number {
+  if (ring.length < 3) return 0;
+  let sum = 0;
+  for (const c of corners) {
+    if (pointInRing(c, ring as Ring)) continue;
+    let d = Infinity;
+    for (let i = 0; i < ring.length; i++) d = Math.min(d, segmentDistance(c, ring[i]!, ring[(i + 1) % ring.length]!));
+    sum += d;
+  }
+  return sum;
+}
 
 type Drag =
   | { kind: "pan"; id: number; start: XY; last: XY; moved: boolean }
-  | { kind: "move"; id: number; mapId: string; startW: XY; centreW: XY; moved: boolean }
+  // ring: the map's location's fetched area (projected), if known. exposure: outsideBy at the last accepted centre.
+  | { kind: "move"; id: number; mapId: string; startW: XY; centreW: XY; moved: boolean; ring: number[][] | null; exposure: number }
   | { kind: "rotate"; id: number; mapId: string; centreW: XY; offset: number };
 
 interface Draft { mapId: string; centre?: LonLat; rotationDeg?: number }
@@ -137,10 +165,41 @@ export function MapCanvas(props: MapCanvasProps) {
       ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
       drawArea(ctx, p.preview, p.style, v, w, h, pathCache.current.paths);
       if (p.highlight?.fids.length) drawHighlight(ctx, p.preview, p.highlight, v, w, h, pathCache.current.paths);
+      drawLocations(ctx, p.preview, v, w, h);
     }
     const maps = shownMaps();
     drawMaps(ctx, maps, cornersOf(maps), p.selectedIds, v, w, h, paperColour(p.style));
     cv.dataset.frameMs = (performance.now() - t0).toFixed(2);
+  }
+
+  function drawLocations(ctx: CanvasRenderingContext2D, preview: AreaPreview, v: View, w: number, h: number): void {
+    const rings = preview.locations ?? [];
+    if (!rings.length) return;
+    ctx.save();
+    ctx.setLineDash(LOCATION_DASH);
+    ctx.strokeStyle = LOCATION_INK;
+    ctx.lineWidth = 1.25;
+    for (const l of rings) {
+      if (l.fetchRing.length < 3) continue;
+      ctx.beginPath();
+      l.fetchRing.forEach((pt, i) => { const [x, y] = toScreen(v, w, h, [pt[0]!, pt[1]!]); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+      ctx.closePath();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** The fetched area (projected) of a map's location, from the preview. */
+  function ringOf(map: MapSpec): number[][] | null {
+    const ring = live.current.props.preview?.locations?.find((l) => l.id === map.locationId)?.fetchRing;
+    return ring && ring.length >= 3 ? ring : null;
+  }
+
+  /** outsideBy for a map at a centre; 0 when its frame can't be worked out. */
+  function exposureAt(map: MapSpec, centre: LonLat, ring: number[][]): number {
+    const a = live.current.area;
+    if (!a) return 0;
+    try { return outsideBy(mapFrameCorners(a, { ...map, centre }), ring); } catch { return 0; }
   }
 
   function request(): void {
@@ -249,7 +308,12 @@ export function MapCanvas(props: MapCanvasProps) {
         const sel = pr.selectedIds;
         if (e.shiftKey || e.ctrlKey || e.metaKey) pr.onSelect(sel.includes(pin) ? sel.filter((s) => s !== pin) : [...sel, pin]);
         else if (!(sel.length === 1 && sel[0] === pin)) pr.onSelect([pin]);
-        drag.current = { kind: "move", id: e.pointerId, mapId: pin, startW: toWorld(v, w, h, p), centreW: pinPoint(corners[pin]!), moved: false };
+        const map = maps.find((m) => m.id === pin)!;
+        const ring = ringOf(map);
+        drag.current = {
+          kind: "move", id: e.pointerId, mapId: pin, startW: toWorld(v, w, h, p), centreW: pinPoint(corners[pin]!), moved: false,
+          ring, exposure: ring ? exposureAt(map, map.centre, ring) : 0,
+        };
         setCursor("move");
         return;
       }
@@ -275,7 +339,16 @@ export function MapCanvas(props: MapCanvasProps) {
       if (Math.hypot(p[0] - sx, p[1] - sy) > CLICK_SLOP_PX) d.moved = true;
       if (!d.moved) return;
       const centre = lonLatAt([d.centreW[0] + wp[0] - d.startW[0], d.centreW[1] + wp[1] - d.startW[1]]);
-      if (centre) draft.current = { mapId: d.mapId, centre };
+      if (!centre) return;
+      // Clamp to the last valid centre: a move that leaves the frame further outside its location's data than
+      // the last accepted one is refused. A frame already outside can still come back in.
+      const map = d.ring ? live.current.props.maps.find((m) => m.id === d.mapId) : undefined;
+      if (d.ring && map) {
+        const exposure = exposureAt(map, centre, d.ring);
+        if (exposure > 0 && exposure > d.exposure) return;
+        d.exposure = exposure;
+      }
+      draft.current = { mapId: d.mapId, centre };
     } else {
       const raw = bearingFrom(d.centreW, toWorld(v, w, h, p)) + d.offset;
       draft.current = { mapId: d.mapId, rotationDeg: snapRotation(raw, e.shiftKey) };

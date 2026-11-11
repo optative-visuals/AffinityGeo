@@ -62,6 +62,14 @@ function requireString(body: JsonBody, key: string): string {
   return v;
 }
 
+/** An optional string field: a location id, say. */
+function optionalString(body: JsonBody, key: string): string | undefined {
+  const v = body[key];
+  if (v === undefined) return undefined;
+  if (typeof v !== "string") throw new ApiError(400, `"${key}" must be text.`);
+  return v;
+}
+
 function intParam(url: URL, key: string, fallback: number, max: number): number {
   const raw = url.searchParams.get(key);
   if (raw === null || raw === "") return fallback;
@@ -70,11 +78,13 @@ function intParam(url: URL, key: string, fallback: number, max: number): number 
   return n;
 }
 
-interface SendResult {
+export interface SendResult {
   mapId: string; ok: boolean;
   created?: number; updated?: number; removed?: number;
   keptEdited?: unknown[]; resized?: boolean; warnings?: string[];
   error?: string; needsResizeChoice?: true; artboardMm?: { width: number; height: number };
+  /** Set when part of the map's frame lies outside its location's data. */
+  outside?: true;
 }
 
 const failed = (mapId: string, error: string): SendResult => ({
@@ -172,6 +182,7 @@ export function createApi(deps: ApiDeps) {
         mapId, ok: true, created: num(r.created), updated: num(r.updated), removed: num(r.removed),
         keptEdited: Array.isArray(r.keptEdited) ? r.keptEdited : [], resized: r.resized === true,
         warnings: Array.isArray(r.warnings) ? r.warnings.filter((w): w is string => typeof w === "string") : [],
+        ...(session.project === project && project.maps.includes(map) && session.outside(mapId) ? { outside: true as const } : {}),
       });
     }
     return { results };
@@ -182,6 +193,7 @@ export function createApi(deps: ApiDeps) {
     const [, area, a, b] = parts; // parts[0] === "api"
     const n = parts.length;
     const body = method === "POST" || method === "PATCH" ? await readJson(req) : {};
+    const location = url.searchParams.get("location") || undefined; // GET routes: the first location when absent
 
     if (area === "affinity" && n === 2 && method === "GET") {
       return deps.affinityState ? deps.affinityState() : { connected: false, busy: false };
@@ -199,11 +211,11 @@ export function createApi(deps: ApiDeps) {
     }
 
     if (area === "project") {
-      if (n === 2 && method === "GET") return { project: session.current, dirty: session.dirty, counts: session.counts() };
+      if (n === 2 && method === "GET") return { project: session.current, dirty: session.dirty, counts: session.counts(location) };
       if (n === 3 && method === "POST") {
         if (a === "new") {
-          const areaIn = (body.area ?? {}) as { placeName: string; bboxWgs84: unknown };
-          const { project, warning } = session.create(body.name, areaIn, body.preset ?? "Light");
+          // `area: { placeName, bboxWgs84 }` is the older body: a box with no margin.
+          const { project, warning } = session.create(body.name, body.location ?? body.area ?? {}, body.preset ?? "Light");
           return warning ? { ...project, warning } : project;
         }
         if (a === "open") return session.open(requireString(body, "path"));
@@ -217,7 +229,7 @@ export function createApi(deps: ApiDeps) {
 
     if (area === "data") {
       if (n === 3 && method === "POST") {
-        if (a === "refresh") return session.refresh();
+        if (a === "refresh") return session.refresh(optionalString(body, "location"));
         if (a === "import") {
           const datasetName = typeof body.datasetName === "string" ? body.datasetName : undefined;
           return { counts: await session.importFile(requireString(body, "path"), requireString(body, "role"), datasetName) };
@@ -227,18 +239,27 @@ export function createApi(deps: ApiDeps) {
       if (n === 4 && a && b === "features" && method === "GET") {
         const q = url.searchParams.get("q") ?? "";
         const sort = url.searchParams.get("sort") || undefined;
-        return session.features(a, q, intParam(url, "offset", 0, Number.MAX_SAFE_INTEGER), intParam(url, "limit", 100, 1000), sort, url.searchParams.get("dir") || "asc");
+        return session.features(a, q, intParam(url, "offset", 0, Number.MAX_SAFE_INTEGER), intParam(url, "limit", 100, 1000), sort, url.searchParams.get("dir") || "asc", location);
       }
       if (n === 4 && a && b === "match" && method === "GET") {
-        return { fids: session.matching(a, url.searchParams.get("filter") ?? "").fids };
+        return { fids: session.matching(a, url.searchParams.get("filter") ?? "", location).fids };
       }
       if (n === 4 && a && b === "select" && method === "POST") {
         const mapId = requireString(body, "mapId");
         const map = session.map(mapId);
-        const { role, fids } = session.matching(a, body.filter);
+        const { role, fids } = session.matching(a, body.filter, map.locationId);
         const r = (await affinityResult({ op: "selectOnMap", projectId: session.current.id, mapId: map.id, role: role as RoleId, fids })) as { selected?: unknown } | undefined;
         return { matched: fids.length, selected: num(r?.selected) };
       }
+    }
+
+    if (area === "locations") {
+      if (n === 2 && method === "POST") {
+        const { location: loc, warning } = session.addLocation(body);
+        return warning ? { ...loc, warning } : loc;
+      }
+      if (n === 3 && a && method === "PATCH") return session.patchLocation(a, body);
+      if (n === 3 && a && method === "DELETE") { session.deleteLocation(a); return { ok: true }; }
     }
 
     if (area === "preview" && a === "area" && n === 3 && method === "GET") return session.areaPreview();
@@ -264,10 +285,12 @@ export function createApi(deps: ApiDeps) {
     if (area === "maps") {
       if (n === 2 && method === "POST") return session.addMap(body as NewMapInput);
       if (n === 3 && a === "status" && method === "GET") {
+        if (location !== undefined) session.location(location); // 400 for an unknown id, before asking Affinity
         if (!session.current.maps.length) return [];
-        return session.statuses(await listTargets());
+        return session.statuses(await listTargets(), location);
       }
-      if (n === 4 && a && b === "preview" && method === "GET") { session.map(a); return buildMapJob(session.current, session.data, a); }
+      // The thumbnail shows only the frame: no bleed margin (the send draws one).
+      if (n === 4 && a && b === "preview" && method === "GET") { session.map(a); return buildMapJob(session.current, session.data, a, { bleed: false }); }
       if (n === 4 && a && b === "link" && method === "POST") {
         const map = session.map(a);
         const docId = requireString(body, "docId");

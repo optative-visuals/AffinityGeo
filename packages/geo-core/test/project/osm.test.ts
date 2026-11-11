@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { DataError, areaWarning, buildOverpassQuery, fetchOsm, parseOverpass } from "../../src/project/osm.js";
+import { DataError, areaWarning, buildOverpassQuery, fetchAreaFor, fetchOsm, parseOverpass } from "../../src/project/osm.js";
+import type { LocationSpec } from "../../src/project/types.js";
 import type { Bbox } from "../../src/types.js";
 
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/osm-parkland.json", import.meta.url), "utf8"));
@@ -19,12 +20,57 @@ const fake = (status: number, body: unknown = { elements: [] }) => {
 
 describe("buildOverpassQuery", () => {
   it("is one json query with geometry output and the bbox as south,west,north,east", () => {
-    const q = buildOverpassQuery(small);
+    const q = buildOverpassQuery({ bbox: small });
     expect(q.startsWith("[out:json][timeout:90];")).toBe(true);
     expect(q).toContain("out geom;");
     expect(q).toContain("(51.504000,-0.169000,51.506500,-0.164000)");
     for (const needle of ['"highway"', '"building"', '"parking"', '"natural"="water"', '"leisure"', '"landuse"', '"railway"', '"amenity"'])
       expect(q).toContain(needle);
+  });
+});
+
+const SNAPSHOT = "[out:json][timeout:90];(way[\"highway\"](51.504000,-0.169000,51.506500,-0.164000);way[\"building\"](51.504000,-0.169000,51.506500,-0.164000);relation[\"building\"](51.504000,-0.169000,51.506500,-0.164000);way[\"building:part\"](51.504000,-0.169000,51.506500,-0.164000);way[\"amenity\"=\"parking\"](51.504000,-0.169000,51.506500,-0.164000);relation[\"amenity\"=\"parking\"](51.504000,-0.169000,51.506500,-0.164000);way[\"natural\"=\"water\"](51.504000,-0.169000,51.506500,-0.164000);relation[\"natural\"=\"water\"](51.504000,-0.169000,51.506500,-0.164000);way[\"waterway\"=\"riverbank\"](51.504000,-0.169000,51.506500,-0.164000);way[\"water\"](51.504000,-0.169000,51.506500,-0.164000);relation[\"water\"](51.504000,-0.169000,51.506500,-0.164000);way[\"leisure\"~\"^(park|garden|pitch)$\"](51.504000,-0.169000,51.506500,-0.164000);relation[\"leisure\"~\"^(park|garden|pitch)$\"](51.504000,-0.169000,51.506500,-0.164000);way[\"landuse\"](51.504000,-0.169000,51.506500,-0.164000);relation[\"landuse\"](51.504000,-0.169000,51.506500,-0.164000);way[\"natural\"=\"wood\"](51.504000,-0.169000,51.506500,-0.164000);relation[\"natural\"=\"wood\"](51.504000,-0.169000,51.506500,-0.164000);way[\"railway\"~\"^(rail|light_rail|subway|tram|narrow_gauge)$\"](51.504000,-0.169000,51.506500,-0.164000);node[\"amenity\"](51.504000,-0.169000,51.506500,-0.164000);way[\"amenity\"](51.504000,-0.169000,51.506500,-0.164000);node[\"tourism\"](51.504000,-0.169000,51.506500,-0.164000);way[\"tourism\"](51.504000,-0.169000,51.506500,-0.164000);node[\"shop\"](51.504000,-0.169000,51.506500,-0.164000);way[\"shop\"](51.504000,-0.169000,51.506500,-0.164000);node[\"entrance\"](51.504000,-0.169000,51.506500,-0.164000);way[\"entrance\"](51.504000,-0.169000,51.506500,-0.164000);node[\"public_transport\"](51.504000,-0.169000,51.506500,-0.164000);way[\"public_transport\"](51.504000,-0.169000,51.506500,-0.164000);node[\"highway\"=\"bus_stop\"](51.504000,-0.169000,51.506500,-0.164000););out geom;";
+
+describe("buildOverpassQuery with a polygon", () => {
+  const ring: Array<[number, number]> = [[-0.187, 51.501], [-0.18, 51.501], [-0.18, 51.506]];
+  it("keeps the bbox query exactly as it was", () => {
+    expect(buildOverpassQuery({ bbox: small })).toBe(SNAPSHOT);
+  });
+  it("filters every selector by the polygon, latitude first", () => {
+    const q = buildOverpassQuery({ ring });
+    expect(q).toContain('poly:"51.501000 -0.187000 ');
+    expect(q).toContain('(poly:"51.501000 -0.187000 51.501000 -0.180000 51.506000 -0.180000")');
+    expect(q).not.toContain("(51.");
+    expect(q.startsWith("[out:json][timeout:90];")).toBe(true);
+    expect(q.endsWith("out geom;")).toBe(true);
+  });
+});
+
+describe("fetchOsm with a polygon", () => {
+  it("refuses a ring over the area limit without calling fetch", async () => {
+    const big: Array<[number, number]> = [[-0.2, 51.5], [-0.1, 51.5], [-0.1, 51.545], [-0.2, 51.545]];
+    const { impl, calls } = fake(200);
+    await expect(fetchOsm({ ring: big }, impl)).rejects.toThrow(TOO_BIG);
+    expect(calls).toHaveLength(0);
+  });
+  it("posts a poly query for a small ring", async () => {
+    const { impl, calls } = fake(200);
+    await fetchOsm({ ring: [[-0.169, 51.504], [-0.164, 51.504], [-0.164, 51.5065]] }, impl);
+    expect(decodeURIComponent(calls[0].init.body)).toContain('poly:"51.504000 -0.169000 ');
+  });
+});
+
+describe("fetchAreaFor", () => {
+  const loc = (kind: "box" | "shape", contextM: number): LocationSpec => ({
+    id: "l1", name: "A", placeName: "A", kind, contextM, dataVersion: 0, fetchedAt: null,
+    ring: [[-0.169, 51.504], [-0.164, 51.504], [-0.164, 51.5065], [-0.169, 51.5065]],
+  });
+  it("gives a bbox for a box with no margin", () => {
+    expect(fetchAreaFor(loc("box", 0))).toEqual({ bbox: [-0.169, 51.504, -0.164, 51.5065] });
+  });
+  it("gives a ring for a box with a margin or for a shape", () => {
+    expect(fetchAreaFor(loc("box", 200))).toHaveProperty("ring");
+    expect(fetchAreaFor(loc("shape", 0))).toHaveProperty("ring");
   });
 });
 
@@ -125,31 +171,66 @@ describe("parseOverpass details", () => {
 describe("fetchOsm", () => {
   it.each([429, 504])("says OpenStreetMap is busy on %i", async (status) => {
     const f = fake(status);
-    await expect(fetchOsm(small, f.impl)).rejects.toThrow(BUSY);
-    await expect(fetchOsm(small, f.impl)).rejects.toBeInstanceOf(DataError);
+    await expect(fetchOsm({ bbox: small }, f.impl)).rejects.toThrow(BUSY);
+    await expect(fetchOsm({ bbox: small }, f.impl)).rejects.toBeInstanceOf(DataError);
     expect(f.calls.length).toBe(2); // no automatic retry
   });
   it("says busy when the network fails", async () => {
     const impl = (async () => { throw new TypeError("fetch failed"); }) as unknown as typeof fetch;
-    await expect(fetchOsm(small, impl)).rejects.toThrow(BUSY);
+    await expect(fetchOsm({ bbox: small }, impl)).rejects.toThrow(BUSY);
   });
   it("refuses a 30 km² area without calling out", async () => {
     const f = fake(200);
     const big: Bbox = [-0.40, 51.40, 0.10, 51.52]; // ~ 35 km²
-    await expect(fetchOsm(big, f.impl)).rejects.toThrow(TOO_BIG);
+    await expect(fetchOsm({ bbox: big }, f.impl)).rejects.toThrow(TOO_BIG);
     expect(f.calls.length).toBe(0);
   });
   it("treats a 200 with a runtime-error remark as busy", async () => {
     const f = fake(200, { remark: 'runtime error: Query timed out in "query" at line 1 after 91 seconds.', elements: [] });
-    await expect(fetchOsm(small, f.impl)).rejects.toThrow(BUSY);
+    await expect(fetchOsm({ bbox: small }, f.impl)).rejects.toThrow(BUSY);
   });
   it("posts the query with the User-Agent and parses the response", async () => {
     const f = fake(200, fixture);
-    const ds = await fetchOsm(small, f.impl);
+    const ds = await fetchOsm({ bbox: small }, f.impl);
     expect(ds.buildings).toBeDefined();
     expect(f.calls[0].url).toBe("https://overpass-api.de/api/interpreter");
     expect(f.calls[0].init.headers["User-Agent"]).toMatch(/^AffinityGeo\/\S+ \(\+https:\/\/github\.com\/optative-visuals\)$/);
     expect(decodeURIComponent(String(f.calls[0].init.body))).toContain("[out:json][timeout:90];");
+  });
+});
+
+describe("fetchOsm time limit and statuses", () => {
+  const TIMEOUT = "OpenStreetMap took too long to answer. Try again in a minute, or choose a smaller area — your current data is unchanged.";
+  const stalls = (async (_url: string, init: any) => new Promise((_, reject) => {
+    init.signal.addEventListener("abort", () => reject(init.signal.reason));
+  })) as unknown as typeof fetch;
+
+  it("passes an abort signal to fetch", async () => {
+    const f = fake(200);
+    await fetchOsm({ bbox: small }, f.impl);
+    expect(f.calls[0].init.signal).toBeInstanceOf(AbortSignal);
+  });
+  it("gives up with a clear message when the server stalls", async () => {
+    const err = await fetchOsm({ bbox: small }, stalls, { timeoutMs: 10 }).catch((e) => e);
+    expect(err).toBeInstanceOf(DataError);
+    expect(err.message).toBe(TIMEOUT);
+  });
+  it("gives up when the body stalls after the headers arrive", async () => {
+    const impl = (async (_url: string, init: any) => ({
+      ok: true, status: 200,
+      json: () => new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason))),
+    })) as unknown as typeof fetch;
+    await expect(fetchOsm({ bbox: small }, impl, { timeoutMs: 10 })).rejects.toThrow(TIMEOUT);
+  });
+  it("says it was refused, not busy, on other error statuses", async () => {
+    for (const status of [400, 403]) {
+      const err = await fetchOsm({ bbox: small }, fake(status).impl).catch((e) => e);
+      expect(err).toBeInstanceOf(DataError);
+      expect(err.message).toBe(`OpenStreetMap refused the request (${status}). Your current data is unchanged.`);
+    }
+  });
+  it("still says busy for 429 and 5xx", async () => {
+    for (const status of [429, 500, 503]) await expect(fetchOsm({ bbox: small }, fake(status).impl)).rejects.toThrow(BUSY);
   });
 });
 

@@ -81,9 +81,12 @@ export function writeZip(entries: ZipEntry[]): Uint8Array {
   return new Uint8Array(Buffer.concat([...parts, centralBuf, end]));
 }
 
-/** Reads a zip into entries. Supports stored and deflate; zip64 isn't supported. */
+const CORRUPT = "Corrupt zip file.";
+
+/** Reads a zip into entries. Supports stored and deflate; zip64 isn't supported. Any out-of-range offset or size throws Error("Corrupt zip file."). */
 export function readZip(input: Uint8Array): ZipEntry[] {
   const buf = Buffer.from(input.buffer, input.byteOffset, input.byteLength);
+  const within = (off: number, len: number) => Number.isInteger(off) && off >= 0 && off + len <= buf.length;
   let eocd = -1;
   for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) {
     if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
@@ -95,7 +98,7 @@ export function readZip(input: Uint8Array): ZipEntry[] {
   let p = cdOffset;
   const entries: ZipEntry[] = [];
   for (let n = 0; n < count; n++) {
-    if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error("Corrupt zip central directory.");
+    if (!within(p, 46) || buf.readUInt32LE(p) !== 0x02014b50) throw new Error(CORRUPT);
     const method = buf.readUInt16LE(p + 10);
     const crc = buf.readUInt32LE(p + 16);
     const csize = buf.readUInt32LE(p + 20);
@@ -104,20 +107,28 @@ export function readZip(input: Uint8Array): ZipEntry[] {
     const extraLen = buf.readUInt16LE(p + 30);
     const commentLen = buf.readUInt16LE(p + 32);
     const localOff = buf.readUInt32LE(p + 42);
+    if (!within(p + 46, nameLen + extraLen + commentLen)) throw new Error(CORRUPT);
     const name = buf.toString("utf8", p + 46, p + 46 + nameLen);
     p += 46 + nameLen + extraLen + commentLen;
     if (csize === 0xffffffff || usize === 0xffffffff || localOff === 0xffffffff) {
       throw new Error("This zip file uses zip64, which isn't supported.");
     }
     if (name.endsWith("/")) continue;
+    if (!within(localOff, 30)) throw new Error(CORRUPT);
     const lNameLen = buf.readUInt16LE(localOff + 26);
     const lExtraLen = buf.readUInt16LE(localOff + 28);
     const start = localOff + 30 + lNameLen + lExtraLen;
+    if (!within(start, csize)) throw new Error(CORRUPT);
     const body = buf.subarray(start, start + csize);
     let data: Buffer;
-    if (method === 0) data = Buffer.from(body);
-    else if (method === 8) data = zlib.inflateRawSync(body);
-    else throw new Error(`Unsupported zip compression method ${method} for ${name}.`);
+    if (method === 0) {
+      if (csize !== usize) throw new Error(CORRUPT);
+      data = Buffer.from(body);
+    } else if (method === 8) {
+      // Cap the output at the declared size so a tiny file can't inflate to gigabytes.
+      try { data = zlib.inflateRawSync(body, { maxOutputLength: Math.max(1, usize) }); } catch { throw new Error(CORRUPT); }
+      if (data.length !== usize) throw new Error(CORRUPT);
+    } else throw new Error(`Unsupported zip compression method ${method} for ${name}.`);
     if (crc32(data) !== crc) throw new Error(`Checksum mismatch for ${name}.`);
     entries.push({ name, data: new Uint8Array(data) });
   }

@@ -9,11 +9,21 @@
 //   artboard node      geo:map      {"projectId","mapId"}           name = map name
 //   └ "Map — <name>"   geo:mapframe {"projectId","mapId","rect"}    rect = frame rect at the last send (spread px)
 //     ├ "Frame"        grey outline (found by name, untagged): always the first child
-//     ├ "Background"   geo:role "background": one unstroked rectangle filling the frame in the
+//     ├ "Background"   geo:role "background": one unstroked rectangle filling the frame and its bleed in the
 //     │                style's paper colour (geo:fid "background:frame"), an ordinary map object
 //     ├ <role label>   geo:role <roleId>, in style.order (bottom → top)
 //     │  └ objects     geo:fid "<role>:<fid>", geo:sent = Props as last sent
 //     └ "You are here" geo:role "marker": ring + dot circles (geo:fid marker:ring / marker:dot) and the label (marker:label)
+//
+// A map of a shape location (job.mask) adds, between the Background and "You are here":
+//     ├ "Surrounding context"  geo:role "context" (only with job.context): opacity set when made, never again
+//     │  └ <role label>        geo:role "context-<roleId>", objects geo:fid "context-<roleId>:<fid>"
+//     └ "Location"             geo:role "location": a group masked by a real Affinity mask
+//        ├ [Enclosure] "Location mask"  geo:role "mask", geo:fid "mask:shape", geo:sent {"ring"} (frame mm):
+//        │                     a curve with a solid black fill (never drawn; a mask without a fill hides
+//        │                     everything) and no stroke, in the group's Enclosure child list
+//        └ [Main] <role label>…  the data role containers
+// (A shape's own Main children would be a clip instead: moving the shape would move the map too.)
 'use strict';
 
 const OUTLINE_BACK = "The map's frame outline was missing, so AffinityGeo put it back.";
@@ -22,6 +32,15 @@ const MARKER_ROLE = 'marker';
 const MARKER_NAME = 'You are here';
 const BACKGROUND_ROLE = 'background';
 const BACKGROUND_NAME = 'Background';
+const MASK_ROLE = 'mask';
+const MASK_ID = 'mask:shape';
+const MASK_NAME = 'Location mask';
+const LOCATION_ROLE = 'location';
+const LOCATION_NAME = 'Location';
+const MASK_KEPT = 'You reshaped the location mask in Affinity, so it was kept.';
+const CONTEXT_ROLE = 'context';
+const CONTEXT_PREFIX = 'context-';
+const CONTEXT_NAME = 'Surrounding context';
 const RING_PT = 9;      // ring radius (pt)
 const DOT_PT = 6;       // dot radius (pt)
 const LABEL_GAP_MM = 1.5;
@@ -96,7 +115,8 @@ function resizedFrame(B, k, wPx, hPx, fromTopLeft) {
  * added on top as two "marker" point layers. The job's background (the paper) becomes one
  * more polygon layer put first, below them all (its order is below every other, so container
  * stacking keeps it lowest too): a single closed
- * rectangle over the whole frame, (0,0)-(width,height) mm, filled, with no stroke.
+ * rectangle over the whole frame, (0,0)-(width,height) mm, filled, with no stroke; with job.bleedMm it
+ * spans (-x,-y)-(width+x,height+y) instead, so it covers the bleed margin like the data layers.
  */
 function normaliseJob(job, plan) {
   let skipped = 0;
@@ -118,11 +138,13 @@ function normaliseJob(job, plan) {
   layers.sort(function (a, b) { return (a.style.order || 0) - (b.style.order || 0); });
   // The background goes first explicitly (not by its order), so no layer can ever sort below it.
   if (job && job.background && job.sizeMm) {
-    const w = job.sizeMm.width, h = job.sizeMm.height;
+    // With a bleed margin (job.bleedMm) the paper spreads past the frame by the same margin as the data layers.
+    const bx = job.bleedMm ? job.bleedMm.x : 0, by = job.bleedMm ? job.bleedMm.y : 0;
+    const x0 = round2(-bx), y0 = round2(-by), x1 = round2(job.sizeMm.width + bx), y1 = round2(job.sizeMm.height + by);
     const lowest = layers.length ? Math.min(-1, (layers[0].style.order || 0) - 1) : -1;
     layers.unshift({ role: BACKGROUND_ROLE, name: BACKGROUND_NAME, kind: 'polygon',
       style: { fill: lower(job.background.fill), stroke: null, strokePt: 0, visible: true, order: lowest, pointRadiusPt: 0 },
-      features: [{ fid: 'frame', name: BACKGROUND_NAME, paths: [[0, 0, w, 0, w, h, 0, h]], closed: true }] });
+      features: [{ fid: 'frame', name: BACKGROUND_NAME, paths: [[x0, y0, x1, y0, x1, y1, x0, y1]], closed: true }] });
   }
   if (job && job.marker) {
     const m = job.marker;
@@ -137,6 +159,31 @@ function normaliseJob(job, plan) {
       features: [{ fid: 'dot', name: 'Dot', paths: [[m.x, m.y]], closed: false }] });
   }
   return { job: Object.assign({}, job, { layers: layers }), skipped: skipped };
+}
+
+/**
+ * The job with its context layers (job.context) added as ordinary layers of role "context-<roleId>",
+ * so they are planned, drawn and kept like any other. A job without context is returned as it is.
+ */
+function withContext(job) {
+  if (!job || !job.context || !Array.isArray(job.context.layers)) return job;
+  const ctx = job.context.layers.map(function (l) { return Object.assign({}, l, { role: CONTEXT_PREFIX + l.role }); });
+  return Object.assign({}, job, { layers: (job.layers || []).concat(ctx) });
+}
+
+/** [[x, y], …] without a last node repeating the first (within 0.01 mm). */
+function openRing(pts) {
+  const n = pts.length;
+  if (n > 1 && Math.abs(pts[0][0] - pts[n - 1][0]) <= 0.01 && Math.abs(pts[0][1] - pts[n - 1][1]) <= 0.01) return pts.slice(0, n - 1);
+  return pts;
+}
+
+/** Two mask rings (frame mm) with the same nodes, each within the geometry tolerance (0.15 mm). */
+function ringSame(a, b) {
+  const x = openRing(a || []), y = openRing(b || []);
+  if (x.length !== y.length) return false;
+  for (let i = 0; i < x.length; i++) if (!mmSame(x[i], y[i])) return false;
+  return true;
 }
 
 /**
@@ -243,6 +290,20 @@ function list(collection) {
 }
 function children(node) {
   try { return node && node.children ? [...node.children] : []; } catch (e) { return []; }
+}
+
+/** A node's Enclosure child list (its mask, when it has one). */
+function enclosures(node) {
+  try {
+    const s = sdk();
+    return node ? [...new s.N.NodeChildren(node.handle, s.C.NodeChildType.Enclosure)] : [];
+  } catch (e) { return []; }
+}
+
+// The SDK gives a fresh wrapper on every children read: compare nodes with isSameNode.
+function sameNode(a, b) {
+  if (a === b) return true;
+  try { return !!a && !!b && typeof a.isSameNode === 'function' && a.isSameNode(b); } catch (e) { return false; }
 }
 
 function tagOf(node, key) {
@@ -464,6 +525,17 @@ function readCurves(node) {
   return out;
 }
 
+/**
+ * The mask's outline as it is now, in frame mm: undefined when it can't be read (unknown, never
+ * an edit), null when it isn't one curve any more (the designer added or removed a sub-path).
+ */
+function readMaskRing(node, mapping) {
+  const c = readCurves(node).curves;
+  if (!c.length) return undefined;
+  if (c.length !== 1) return null;
+  return openRing(c[0].nodes.map(function (n) { return mapping.toMm(n[0], n[1]); }));
+}
+
 /** Props { fill, stroke, widthPt, visible, geom } of an object as Affinity holds it now. */
 function readProps(node, kind, mapping, dpi, geomSignature) {
   const st = readStroke(node, dpi);
@@ -583,10 +655,17 @@ function findOutline(group) {
   return null;
 }
 
-/** All app objects under the frame group (in any container the designer moved them to). */
+/**
+ * All app objects under the frame group (in any container the designer moved them to). The
+ * Location group is looked into at no cost in depth (its Main children are the masked layers);
+ * its mask, in the Enclosure list, is never a map object. A mask curve holding the layers in its
+ * own Main list (the earlier clip layout) is looked into too.
+ */
 function collectObjects(group, out, depth) {
   for (const c of children(group)) {
     const id = tagOf(c, 'geo:fid');
+    if (id == null && tagOf(c, 'geo:role') === LOCATION_ROLE) { collectObjects(c, out, depth); continue; }
+    if (id === MASK_ID) { if (depth > 0) collectObjects(c, out, depth - 1); continue; }
     if (id != null) { out.push({ id: id, node: c }); continue; }
     if (depth > 0) collectObjects(c, out, depth - 1);
   }
@@ -776,13 +855,13 @@ function sendMap(documents, payload, deps) {
   const drawMapping = frameMapping(drawR, drawB, ppm, plan);
 
   // 4. Read what's there, plan the send.
-  const norm = normaliseJob(raw, plan);
+  const norm = normaliseJob(withContext(raw), plan);
   const job = norm.job;
   const kindOf = {}, layerOf = {};
   for (const l of job.layers) { kindOf[l.role] = l.kind; for (const f of l.features) layerOf[l.role + ':' + f.fid] = l; }
   const existing = [];
   let label = null;
-  for (const o of collectObjects(group, [], 3)) {
+  for (const o of collectObjects(group, [], 4)) {
     if (o.id === 'marker:label') { if (!label) label = o.node; continue; }
     const id = splitId(o.id);
     if (!id) continue;
@@ -831,15 +910,178 @@ function sendMap(documents, payload, deps) {
     if (newLabel) { try { doc.executeCommand(s.C.DocumentCommand.createDeleteSelection(sel(doc, newLabel))); } catch (e) { /* ignore */ } }
   };
 
+  // The "Location" group and the "Surrounding context" group: direct children of the frame group.
+  // The mask is the Location group's Enclosure child.
+  let location = null, mask = null, ctxGroup = null;
+  for (const c of children(group)) {
+    if (tagOf(c, 'geo:fid') != null) continue;
+    const r = tagOf(c, 'geo:role');
+    if (!location && r === LOCATION_ROLE) location = c;
+    else if (!ctxGroup && r === CONTEXT_ROLE) ctxGroup = c;
+  }
+  if (location) mask = enclosures(location).filter(function (c) { return tagOf(c, 'geo:fid') === MASK_ID; })[0] || null;
+  // A tagged mask left in the frame group's Main list (a send that failed half-way) is taken back
+  // and put into the Location group's Enclosure list below. One holding children is the earlier
+  // clip layout: left alone.
+  let strayMask = null;
+  if (!mask) {
+    strayMask = children(group).filter(function (c) { return tagOf(c, 'geo:fid') === MASK_ID && !children(c).length; })[0] || null;
+    mask = strayMask;
+  }
+  const wantRing = raw.mask && Array.isArray(raw.mask.ring) && raw.mask.ring.length >= 3
+    ? raw.mask.ring.map(function (pt) { return [round2(pt[0]), round2(pt[1])]; }) : null;
+  const ringPage = function () { return drawMapping.toPage([[].concat.apply([], wantRing)]); };
+  // The mask follows the hand-edit rule of any map object: reshaped by hand, it is kept (unless
+  // reset); deleted by the designer, it isn't made again (unless reset).
+  let maskAction = 'none'; // create | reshape | remove | none
+  let maskDeleted = false;
+  if (mask) {
+    const sentMask = parseJson(tagOf(mask, 'geo:sent'));
+    const sentRing = sentMask && Array.isArray(sentMask.ring) ? sentMask.ring : null;
+    const now = readMaskRing(mask, readMapping);
+    const edited = !!sentRing && now !== undefined && !(now && ringSame(now, sentRing));
+    if (edited && !reset) warnings.push(MASK_KEPT);
+    else if (!wantRing) maskAction = 'remove';
+    else if (edited || !sentRing || !ringSame(sentRing, wantRing) || newSize) maskAction = 'reshape';
+  } else if (wantRing) {
+    if (!reset && sentIds.indexOf(MASK_ID) >= 0) maskDeleted = true; else maskAction = 'create';
+  }
+  // Context turned off: its group goes only when everything in it is the app's and is going.
+  // Anything else in it (a kept hand-edited object, the designer's own drawing, a map object
+  // dragged in) keeps the group; then only the emptied context containers go with their objects.
+  let ctxGroupGoes = false;
+  const ctxEmptied = [];
+  if (ctxGroup && !raw.context) {
+    const going = function (n) { return p.remove.some(function (r) { return sameNode(r, n); }); };
+    const emptied = function (c) {
+      const r = tagOf(c, 'geo:role');
+      return r != null && r.indexOf(CONTEXT_PREFIX) === 0 && tagOf(c, 'geo:fid') == null && children(c).every(going);
+    };
+    let allGo = true;
+    for (const c of children(ctxGroup)) {
+      if (emptied(c)) ctxEmptied.push(c);
+      else if (!going(c)) allGo = false;
+    }
+    ctxGroupGoes = allGo;
+  }
+  const move = function (nodes, anchor, type, childType) {
+    return s.C.DocumentCommand.createMoveNodes(sel(doc, nodes), anchor, type, childType || s.C.NodeChildType.Main);
+  };
+  const isDataLayer = function (c) {
+    const r = tagOf(c, 'geo:role');
+    return r != null && tagOf(c, 'geo:fid') == null && r !== BACKGROUND_ROLE && r !== MARKER_ROLE &&
+      r !== MASK_ROLE && r !== LOCATION_ROLE && r !== CONTEXT_ROLE && r.indexOf(CONTEXT_PREFIX) !== 0;
+  };
+  const backgroundLayer = function () {
+    return children(group).filter(function (c) { return tagOf(c, 'geo:role') === BACKGROUND_ROLE; })[0] || null;
+  };
+
   const created = [];
   const removed = p.remove.slice();
   try {
-  // 5. Containers: one per role with something to create, in style.order; the marker group on top.
-  const containers = {};
-  for (const c of children(group)) {
-    const r = tagOf(c, 'geo:role');
-    if (r != null && !containers[r]) containers[r] = c;
+  // 5a. The mask: a real Affinity mask, the curve in the Location group's Enclosure list (in its
+  // Main list it would be a clip, and moving it would move the map too).
+  // A mask the job no longer has goes: the layers move back out where the Location group was (in
+  // order), then the group goes with its mask; a group holding the designer's own objects stays.
+  // A new mask is one curve with a solid fill (never drawn; with none it hides everything) and no
+  // stroke. The Location group is made for it above the context (or the background), and every
+  // data layer of the frame moves into it; then the curve moves into its Enclosure list.
+  // The commands that put a mask curve into the Location group's Enclosure list, making the group
+  // (tagged, above the context or the background, holding the frame's data layers) when needed.
+  const intoLocation = function (curve, madeLocation, tags, cmds) {
+    if (madeLocation) {
+      tags.push(setTag(doc, location, 'geo:role', LOCATION_ROLE));
+      cmds.push(move(location, ctxGroup || backgroundLayer() || outline, s.NodeMoveType.After));
+    }
+    const layers = children(group).filter(isDataLayer);
+    if (layers.length) cmds.push(move(layers, location, s.NodeMoveType.Inside));
+    if (curve) cmds.push(move(curve, location, s.NodeMoveType.Inside, s.C.NodeChildType.Enclosure));
+  };
+  if (maskAction === 'remove') {
+    const cmds = [];
+    const doomed = [];
+    let groupGoes = false;
+    if (location) {
+      const inside = children(location);
+      const ours = inside.filter(function (c) { return tagOf(c, 'geo:role') != null || tagOf(c, 'geo:fid') != null; });
+      if (ours.length) cmds.push(move(ours, location, s.NodeMoveType.Before));
+      groupGoes = ours.length === inside.length;
+      if (groupGoes) doomed.push(location);
+    }
+    if (!groupGoes || strayMask) doomed.push(mask); // the group takes its own mask with it
+    cmds.push(s.C.DocumentCommand.createDeleteSelection(sel(doc, doomed)));
+    run(doc, cmds);
+    mask = null;
+    if (groupGoes) location = null;
+  } else if (maskAction === 'create') {
+    const madeLocation = !location;
+    if (madeLocation) location = addContainer(doc, group, LOCATION_NAME);
+    const b = s.C.AddChildNodesCommandBuilder.create();
+    b.setInsertionTarget(group);
+    const def = s.N.PolyCurveNodeDefinition.create(polyCurveFor(ringPage(), 'polygon', true, 0),
+      solid(0, 0, 0), s.FillDescriptor.createNone(), lineStyleDesc(0), opaque());
+    def.setUserDescription(MASK_NAME);
+    b.addPolyCurveNode(def);
+    const before = children(group).length;
+    const cmd = b.createCommand(false, s.C.NodeChildType.Main);
+    doc.executeCommand(cmd);
+    let fromCmd = [];
+    try { fromCmd = cmd.newNodes ? [...cmd.newNodes] : []; } catch (e) { fromCmd = []; }
+    mask = plan.pickCreatedNodes(children(group).slice(before), fromCmd, [MASK_NAME], function (n) { return n.userDescription; }).nodes[0] || null;
+    // The tags and the moves go in one compound. If it fails, the new curve (a black shape on top
+    // of the map) and a new, still empty Location group are deleted again; only if that fails too
+    // are they tagged, so the next send finds them (a stray mask is taken back, see above).
+    const tags = [];
+    const cmds = [];
+    if (mask) {
+      tags.push(setTag(doc, mask, 'geo:role', MASK_ROLE), setTag(doc, mask, 'geo:fid', MASK_ID),
+        setTag(doc, mask, 'geo:sent', JSON.stringify({ ring: wantRing })));
+    } else {
+      warnings.push("AffinityGeo couldn't find the location mask after adding it, so the map isn't masked. Send the map again to retry.");
+    }
+    intoLocation(mask, madeLocation, tags, cmds);
+    try {
+      run(doc, tags.concat(cmds));
+    } catch (e) {
+      const fresh = [mask, madeLocation ? location : null].filter(function (n) { return !!n; });
+      try {
+        if (fresh.length) doc.executeCommand(s.C.DocumentCommand.createDeleteSelection(sel(doc, fresh)));
+      } catch (e2) { try { run(doc, tags); } catch (e3) { /* ignore */ } }
+      throw e;
+    }
+    if (mask) created.push(MASK_ID);
+  } else if (strayMask) {
+    // Kept or reshaped: back into the Location group's Enclosure list first (it keeps its place on the page).
+    const madeLocation = !location;
+    if (madeLocation) location = addContainer(doc, group, LOCATION_NAME);
+    const tags = [];
+    const cmds = [];
+    intoLocation(strayMask, madeLocation, tags, cmds);
+    try { run(doc, tags.concat(cmds)); } catch (e) { try { run(doc, tags); } catch (e2) { /* ignore */ } throw e; }
   }
+
+  // 5b. Containers: one per role with something to create, in style.order; the marker group on top.
+  // The background and the marker sit in the frame group, the data layers in the Location group (or
+  // the frame group when there's none), the context layers in the "Surrounding context" group.
+  const containers = {};
+  const parentOf = {}; // role → 'group' | 'location' | 'context'
+  const scan = function (node, key) {
+    for (const c of children(node)) {
+      const r = tagOf(c, 'geo:role');
+      if (r == null || r === MASK_ROLE || r === LOCATION_ROLE || r === CONTEXT_ROLE || tagOf(c, 'geo:fid') != null || containers[r]) continue;
+      containers[r] = c;
+      parentOf[r] = key;
+    }
+  };
+  scan(group, 'group');
+  if (location) scan(location, 'location');
+  if (ctxGroup) scan(ctxGroup, 'context');
+  const parentFor = function (role) {
+    if (role.indexOf(CONTEXT_PREFIX) === 0) return 'context';
+    if (role === BACKGROUND_ROLE || role === MARKER_ROLE || !location || !wantRing) return 'group';
+    return 'location';
+  };
+  const nodeFor = function (key) { return key === 'location' ? location : key === 'context' ? ctxGroup : group; };
   const orderOf = function (role) {
     if (role === MARKER_ROLE) return Infinity;
     for (const l of job.layers) if (l.role === role) return l.style.order;
@@ -849,41 +1091,61 @@ function sendMap(documents, payload, deps) {
   for (const c of p.create) if (!containers[c.role] && needed.indexOf(c.role) < 0) needed.push(c.role);
   if (labelAction === 'create' && !containers[MARKER_ROLE] && needed.indexOf(MARKER_ROLE) < 0) needed.push(MARKER_ROLE);
   needed.sort(function (a, b) { return orderOf(a) - orderOf(b); });
+  // The context group is made with its first layer: faded once, just above the background.
+  if (!ctxGroup && needed.some(function (r) { return parentFor(r) === 'context'; })) {
+    ctxGroup = addContainer(doc, group, CONTEXT_NAME);
+    const opacity = typeof raw.context.opacity === 'number' ? raw.context.opacity : 0.5;
+    run(doc, [setTag(doc, ctxGroup, 'geo:role', CONTEXT_ROLE),
+      s.C.DocumentCommand.createSetOpacity(sel(doc, ctxGroup), opacity),
+      move(ctxGroup, backgroundLayer() || outline, s.NodeMoveType.After)]);
+  }
   if (needed.length) {
-    const b = s.C.AddChildNodesCommandBuilder.create();
-    b.setInsertionTarget(group);
-    const names = [];
-    for (const role of needed) {
-      const l = job.layers.find(function (x) { return x.role === role; });
-      const name = role === MARKER_ROLE ? MARKER_NAME : (l ? l.name : role);
-      const def = s.N.ContainerNodeDefinition.createDefault();
-      def.setUserDescription(name);
-      b.addContainerNode(def);
-      names.push(name);
-    }
-    const before = children(group).length;
-    const cmd = b.createCommand(false, s.C.NodeChildType.Main);
-    doc.executeCommand(cmd);
-    let fromCmd = [];
-    try { fromCmd = cmd.newNodes ? [...cmd.newNodes].reverse() : []; } catch (e) { fromCmd = []; }
-    const picked = plan.pickCreatedNodes(children(group).slice(before), fromCmd, names, function (n) { return n.userDescription; });
     const cmds = [];
-    for (let i = 0; i < picked.nodes.length; i++) {
-      containers[needed[i]] = picked.nodes[i];
-      cmds.push(setTag(doc, picked.nodes[i], 'geo:role', needed[i]));
+    const lowest = {}; // per parent: its bottom child before this send's containers were added
+    for (const key of ['group', 'location', 'context']) {
+      const roles = needed.filter(function (r) { return parentFor(r) === key; });
+      if (!roles.length) continue;
+      const parent = nodeFor(key);
+      const b = s.C.AddChildNodesCommandBuilder.create();
+      b.setInsertionTarget(parent);
+      const names = [];
+      for (const role of roles) {
+        const l = job.layers.find(function (x) { return x.role === role; });
+        const name = role === MARKER_ROLE ? MARKER_NAME : (l ? l.name : role);
+        const def = s.N.ContainerNodeDefinition.createDefault();
+        def.setUserDescription(name);
+        b.addContainerNode(def);
+        names.push(name);
+      }
+      const kids = children(parent);
+      lowest[key] = kids[0] || null;
+      const before = kids.length;
+      const cmd = b.createCommand(false, s.C.NodeChildType.Main);
+      doc.executeCommand(cmd);
+      let fromCmd = [];
+      try { fromCmd = cmd.newNodes ? [...cmd.newNodes].reverse() : []; } catch (e) { fromCmd = []; }
+      const picked = plan.pickCreatedNodes(children(parent).slice(before), fromCmd, names, function (n) { return n.userDescription; });
+      for (let i = 0; i < picked.nodes.length; i++) {
+        containers[roles[i]] = picked.nodes[i];
+        parentOf[roles[i]] = key;
+        cmds.push(setTag(doc, picked.nodes[i], 'geo:role', roles[i]));
+      }
     }
-    // Stack each new container just above the highest container below it in style.order.
+    // Stack each new container just above the highest container below it in style.order, among
+    // its siblings; with none below, at the bottom (in the frame group: just above the outline).
     for (const role of needed) {
-      if (role === MARKER_ROLE) continue; // added last, so already on top
+      if (role === MARKER_ROLE || !containers[role]) continue; // the marker is added last, so already on top
+      const key = parentOf[role];
       const o = orderOf(role);
       let below = null, belowOrder = -Infinity;
       for (const r of Object.keys(containers)) {
-        if (r === role) continue;
+        if (r === role || parentOf[r] !== key) continue;
         const ro = orderOf(r);
         if (ro != null && ro < o && ro > belowOrder) { below = containers[r]; belowOrder = ro; }
       }
-      const anchor = below || outline;
-      if (anchor) cmds.push(s.C.DocumentCommand.createMoveNodes(sel(doc, containers[role]), anchor, s.NodeMoveType.After, s.C.NodeChildType.Main));
+      if (below) cmds.push(move(containers[role], below, s.NodeMoveType.After));
+      else if (key === 'group') { if (outline) cmds.push(move(containers[role], outline, s.NodeMoveType.After)); }
+      else if (lowest[key]) cmds.push(move(containers[role], lowest[key], s.NodeMoveType.Before));
     }
     run(doc, cmds);
   }
@@ -1014,7 +1276,15 @@ function sendMap(documents, payload, deps) {
     } else if (labelAction === 'remove') {
       removed.push(label);
     }
+    // The mask follows a new location shape or frame size: reshaped in base space, like any object.
+    if (maskAction === 'reshape') {
+      updateCmds.push(s.C.DocumentCommand.createSetCurves(mask.curvesInterface, toNodeBase(mask, polyCurveFor(ringPage(), 'polygon', true, 0))));
+      updateCmds.push(setTag(doc, mask, 'geo:sent', JSON.stringify({ ring: wantRing })));
+    }
     if (removed.length) updateCmds.push(s.C.DocumentCommand.createDeleteSelection(sel(doc, removed)));
+    // After its objects (deleted first), so no selection holds a node and its own group.
+    if (ctxGroupGoes) updateCmds.push(s.C.DocumentCommand.createDeleteSelection(sel(doc, ctxGroup)));
+    else if (ctxEmptied.length) updateCmds.push(s.C.DocumentCommand.createDeleteSelection(sel(doc, ctxEmptied)));
   } catch (e) {
     // Something failed after objects were made: tag them before giving up (no orphans).
     try { run(doc, createTags); } catch (e2) { /* ignore */ }
@@ -1037,6 +1307,7 @@ function sendMap(documents, payload, deps) {
   // Deleted by the designer and still in the job: remembered as sent, so they stay deleted.
   for (const id of p.deletedIds || []) ids.add(id);
   if ((label && labelAction !== 'remove') || labelDeleted) ids.add('marker:label');
+  if (mask || maskDeleted) ids.add(MASK_ID);
   const keptEdited = p.keptEdited.map(function (k) {
     let name;
     try { name = String(k.nodeId.userDescription || ''); } catch (e) { name = ''; }
@@ -1052,8 +1323,9 @@ function sendMap(documents, payload, deps) {
   }
   return {
     created: created.length,
-    updated: p.update.filter(function (u) { return Object.keys(u.set).length || u.geometry; }).length + (labelUpdated ? 1 : 0),
-    removed: removed.length,
+    updated: p.update.filter(function (u) { return Object.keys(u.set).length || u.geometry; }).length + (labelUpdated ? 1 : 0) +
+      (maskAction === 'reshape' ? 1 : 0),
+    removed: removed.length + (maskAction === 'remove' ? 1 : 0),
     keptEdited: keptEdited,
     resized: resized,
     warnings: warnings,
@@ -1074,7 +1346,7 @@ function selectOnMap(documents, payload) {
     const group = findFrameGroup(f.doc, f.node, payload.projectId, payload.mapId);
     if (!group) continue;
     const want = new Set((payload.fids || []).map(function (fid) { return payload.role + ':' + fid; }));
-    const nodes = collectObjects(group, [], 3).filter(function (o) { return want.has(o.id); }).map(function (o) { return o.node; });
+    const nodes = collectObjects(group, [], 4).filter(function (o) { return want.has(o.id); }).map(function (o) { return o.node; });
     f.doc.executeCommand(s.C.DocumentCommand.createSetSelection(sel(f.doc, nodes)));
     return { selected: nodes.length };
   }
@@ -1147,6 +1419,8 @@ module.exports = {
   readProps: readProps,
   // pure helpers (tested in Node)
   normaliseJob: normaliseJob,
+  withContext: withContext,
+  ringSame: ringSame,
   colourHex: colourHex,
   sameMap: sameMap,
   splitId: splitId,

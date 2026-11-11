@@ -13,13 +13,13 @@ export interface GuidePage {
 export const GUIDE: Record<Screen, GuidePage> = {
   area: {
     title: "The Area screen",
-    intro: "This is where your map's place and its data come from. Every map in the project is drawn from this area.",
+    intro: "This is where your project's places come from. Each location is a box or a shape drawn on the street map, plus some surrounding context: the data just around it, fetched too, so a map can show it faded behind the shape. Every map belongs to one location.",
     actions: [
-      "Refresh data fetches the latest roads, buildings and paths from OpenStreetMap.",
+      "Add location draws a new box. Drag its edges, or switch to Shape and drag the corners.",
+      "Refresh data fetches the latest OpenStreetMap data for the selected location. Do it after changing the shape.",
       "Use a file… swaps one kind of data, such as buildings, for your own file.",
-      "Pick a projection: the way the curved Earth is flattened onto your page. The suggested one suits most maps.",
     ],
-    goodToKnow: "Keep the area small. A park or a town centre fetches in seconds; a whole city can take a minute.",
+    goodToKnow: "Keep each location small. A park or a town centre fetches in seconds; the limit is 25 km², context included.",
   },
   maps: {
     title: "The Maps screen",

@@ -1,6 +1,7 @@
 // The Maps screen: the map list, the Map view or the Gallery, the inspector, and Send with its summary.
 import { useEffect, useState } from "react";
-import { api } from "../api.js";
+import { pointInRing, projector, type Ring } from "@affinitygeo/geo-core/view";
+import { api, type AreaPreview } from "../api.js";
 import { MapCanvas, type LonLat, type MapCanvasMode } from "../map/MapCanvas.js";
 import { useAreaPreview } from "../map/useAreaPreview.js";
 import { Inspector, Section } from "../shell/Inspector.js";
@@ -28,6 +29,16 @@ export function sendLabel(selected: number): string {
 export function nextSelection(current: readonly string[], id: string, additive: boolean): string[] {
   if (!additive) return [id];
   return current.includes(id) ? current.filter((x) => x !== id) : [...current, id];
+}
+
+/**
+ * The location a new map at `world` (projected metres) goes to: the one whose outline is under the click, else the one
+ * whose fetched area is, else `fallback` (the selected location).
+ */
+export function locationAt(locations: AreaPreview["locations"], world: [number, number], fallback: string | null): string | null {
+  const hit = locations.find((l) => l.ring.length >= 3 && pointInRing(world, l.ring as Ring))
+    ?? locations.find((l) => l.fetchRing.length >= 3 && pointInRing(world, l.fetchRing as Ring));
+  return hit?.id ?? fallback;
 }
 
 function ViewToggle() {
@@ -78,9 +89,14 @@ export function MapsScreen({ topBar }: MapsScreenProps) {
 
   async function addAt(centre: LonLat): Promise<void> {
     setMode("browse");
-    const names = getApp().project?.maps.map((m) => m.name) ?? [];
+    const { project: p, preview: pv, selectedLocationId } = getApp();
+    const names = p?.maps.map((m) => m.name) ?? [];
+    let locationId = selectedLocationId;
     try {
-      const m = await api.addMap({ name: nextMapName(names), centre });
+      if (p && pv.data?.locations?.length) locationId = locationAt(pv.data.locations, projector(p.area).forward(centre), selectedLocationId);
+    } catch { /* no projection: the selected location */ }
+    try {
+      const m = await api.addMap({ name: nextMapName(names), centre, ...(locationId ? { locationId } : {}) });
       await getActions().refreshProject().catch(() => undefined); // before select: a refresh drops unknown ids
       select([m.id]);
     } catch (e) {

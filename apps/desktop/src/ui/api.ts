@@ -1,9 +1,10 @@
 // A typed client for the companion's /api routes. Every call adds X-Geo-App: 1 and throws ApiFail on an error.
 // Types only from geo-core and the companion: nothing node-only reaches the UI bundle.
-import type { MapJob, MapSpec, PlaceResult, Project, ProjectStyle, RoleId, RoleSource } from "@affinitygeo/geo-core";
+import type { LocationSpec, MapJob, MapSpec, PlaceResult, Project, ProjectStyle, Ring, RoleId, RoleSource } from "@affinitygeo/geo-core";
 import type { AreaPreview, MapStatus, NewMapInput, ProjectionOption, Targets } from "../../../companion/src/session.js";
+import type { SendResult } from "../../../companion/src/api.js";
 
-export type { AreaPreview, MapStatus, NewMapInput, ProjectionOption, Targets };
+export type { AreaPreview, MapStatus, NewMapInput, ProjectionOption, SendResult, Targets };
 export type Counts = Record<RoleId, number>;
 export type TargetDocument = Targets["documents"][number];
 
@@ -70,38 +71,38 @@ function query(params: Record<string, string | number | undefined>): string {
 
 export interface ProjectState { project: Project | null; dirty: boolean; counts: Counts | null }
 export interface RefreshResult { counts: Counts; changed: Partial<Record<RoleId, { before: number; after: number }>> }
-export interface FeaturesQuery { q?: string; offset?: number; limit?: number; sort?: string; dir?: "asc" | "desc" }
+/** A location as the app sends it: a box or a drawn shape (WGS84, open), plus a margin in metres (200 m when left out). */
+export interface NewLocation { name?: string; placeName: string; kind: "box" | "shape"; ring: Ring; contextM?: number }
+export type LocationPatch = Partial<Pick<LocationSpec, "name" | "kind" | "ring" | "contextM">>;
+export interface MapStatusRow { mapId: string; status: MapStatus; outside: boolean }
+/** `location`: a location id; the first location when left out. */
+export interface FeaturesQuery { q?: string; offset?: number; limit?: number; sort?: string; dir?: "asc" | "desc"; location?: string }
 export interface FeatureRow { fid: string; name: string; attrs: Record<string, unknown> }
-export interface SendResult {
-  mapId: string; ok: boolean;
-  created?: number; updated?: number; removed?: number;
-  keptEdited?: unknown[]; resized?: boolean; warnings?: string[];
-  error?: string; needsResizeChoice?: true; artboardMm?: { width: number; height: number };
-}
 export interface ArtboardLink { docId: string; artboardIndex: number; artboardName: string }
 export interface ScriptsInfo { loader: string; home: string; installed: boolean; scriptsNote?: string | null }
 
 export const api = {
   // ---- project ----
-  /** The open project. No project open (the server's 409) reads as `project: null`. */
-  async project(): Promise<ProjectState> {
+  /** The open project, with one location's counts (the first location's by default). No project open (the server's 409) reads as `project: null`. */
+  async project(location?: string): Promise<ProjectState> {
     try {
-      return await call<ProjectState>("GET", "/api/project");
+      return await call<ProjectState>("GET", `/api/project${query({ location })}`);
     } catch (e) {
       if (e instanceof ApiFail && e.status === 409) return { project: null, dirty: false, counts: null };
       throw e;
     }
   },
-  /** Starts a new project (not saved yet). `warning` is set for a large area. */
-  newProject: (name: string, area: { placeName: string; bboxWgs84: [number, number, number, number] }, preset: string) =>
-    call<Project & { warning?: string }>("POST", "/api/project/new", { name, area, preset }),
+  /** Starts a new project (not saved yet) with its first location. `warning` is set for a large area. */
+  newProject: (name: string, location: NewLocation, preset: string) =>
+    call<Project & { warning?: string }>("POST", "/api/project/new", { name, location, preset }),
   open: (path: string) => call<Project>("POST", "/api/project/open", { path }),
   /** Saves to `path`, or to the file it was opened from / last saved to. A new project needs a path (400, code NEEDS_PATH). */
   save: (path?: string) => call<{ ok: true }>("POST", "/api/project/save", path === undefined ? {} : { path }),
 
   // ---- area and data ----
   places: (q: string) => call<PlaceResult[]>("GET", `/api/places${query({ q })}`),
-  refresh: () => call<RefreshResult>("POST", "/api/data/refresh"),
+  /** Fetches one location's data again ("loc-1", or the only location, when left out). */
+  refresh: (locationId?: string) => call<RefreshResult>("POST", "/api/data/refresh", locationId === undefined ? {} : { location: locationId }),
   importFile: (path: string, role: RoleId, datasetName?: string) =>
     call<{ counts: Counts }>("POST", "/api/data/import", { path, role, ...(datasetName ? { datasetName } : {}) }),
   setSource: (role: RoleId, source: RoleSource) => call<{ counts: Counts }>("POST", "/api/data/source", { role, source }),
@@ -110,6 +111,14 @@ export const api = {
     call<Project>("POST", "/api/project/area", { projectionId, ...(params ? { projectionParams: params } : {}) }),
   areaPreview: () => call<AreaPreview>("GET", "/api/preview/area"),
 
+  // ---- locations ----
+  /** `warning` is set when the location falls badly for the project's projection. */
+  addLocation: (input: NewLocation) => call<LocationSpec & { warning?: string }>("POST", "/api/locations", input),
+  /** A changed shape or margin isn't fetched by itself: call refresh(id) after. */
+  patchLocation: (id: string, patch: LocationPatch) => call<LocationSpec>("PATCH", `/api/locations/${enc(id)}`, patch),
+  /** Refused while maps use the location, and for the last one. */
+  deleteLocation: (id: string) => call<{ ok: true }>("DELETE", `/api/locations/${enc(id)}`),
+
   // ---- style ----
   presets: () => call<Array<{ name: string }>>("GET", "/api/presets"),
   applyPreset: (name: string) => call<ProjectStyle>("POST", "/api/style/preset", { name }),
@@ -117,13 +126,14 @@ export const api = {
     call<ProjectStyle>("POST", "/api/style", patch),
 
   // ---- maps ----
-  addMap: (input: NewMapInput) => call<MapSpec>("POST", "/api/maps", input),
+  /** `locationId`: the first location when left out. A map can't move to another location later. */
+  addMap: (input: NewMapInput & { locationId?: string; showContext?: boolean }) => call<MapSpec>("POST", "/api/maps", input),
   patchMap: (id: string, patch: Partial<MapSpec>) => call<MapSpec>("PATCH", `/api/maps/${enc(id)}`, patch),
   deleteMap: (id: string) => call<{ ok: true }>("DELETE", `/api/maps/${enc(id)}`),
   /** The map as it would be drawn: layers in mm, frame-local. */
   mapPreview: (id: string) => call<MapJob>("GET", `/api/maps/${enc(id)}/preview`),
-  /** Needs Affinity (503 when not connected). */
-  statuses: () => call<Array<{ mapId: string; status: MapStatus }>>("GET", "/api/maps/status"),
+  /** Every map's status, or one location's maps'. `outside`: part of the frame is outside its location's data. Needs Affinity (503 when not connected). */
+  statuses: (location?: string) => call<MapStatusRow[]>("GET", `/api/maps/status${query({ location })}`),
   /** Needs Affinity (503 when not connected). */
   targets: () => call<Targets>("GET", "/api/targets"),
   linkArtboard: (id: string, link: ArtboardLink) => call<{ map: MapSpec }>("POST", `/api/maps/${enc(id)}/link`, link),
@@ -133,7 +143,8 @@ export const api = {
   // ---- data ----
   features: (role: RoleId, opts: FeaturesQuery = {}) =>
     call<{ total: number; rows: FeatureRow[] }>("GET", `/api/data/${enc(role)}/features${query({ ...opts })}`),
-  match: (role: RoleId, filter: string) => call<{ fids: string[] }>("GET", `/api/data/${enc(role)}/match${query({ filter })}`),
+  match: (role: RoleId, filter: string, location?: string) =>
+    call<{ fids: string[] }>("GET", `/api/data/${enc(role)}/match${query({ filter, location })}`),
   /** Selects the matching objects on that map in Affinity. Needs Affinity. */
   selectOnMap: (role: RoleId, mapId: string, filter: string) =>
     call<{ matched: number; selected: number }>("POST", `/api/data/${enc(role)}/select`, { mapId, filter }),

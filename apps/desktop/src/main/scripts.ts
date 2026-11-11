@@ -29,9 +29,25 @@ export function scriptsVersion(o: { isPackaged: boolean; appVersion: string; roo
   try { return o.rootVersion(); } catch { return o.appVersion; }
 }
 
+/** The text of version.js for a version. */
+const versionJs = (version: string): string => `module.exports = ${JSON.stringify(version)};\n`;
+
+/** True when every shipped script and version.js in `dest` matches what ensureScripts would write (a missing file counts as different). */
+function installedMatches(srcDir: string, dest: string, files: string[], version: string): boolean {
+  const same = (a: string, b: string | Buffer): boolean => {
+    try { return readFileSync(a).equals(Buffer.from(b)); } catch { return false; }
+  };
+  return files.every((f) => same(path.join(dest, f), readFileSync(path.join(srcDir, f)))) && same(path.join(dest, "version.js"), versionJs(version));
+}
+
 /**
- * Copies the shipped *.js scripts (not loader.js) into <home>/affinity and writes VERSION, only when VERSION is missing or differs
- * (or `force`). It removes only the names in OBSOLETE and never touches any other file there. Never throws.
+ * Copies the shipped *.js scripts (not loader.js) into <home>/affinity and writes version.js and VERSION. It copies when VERSION is
+ * missing or differs, when `force` is set, or when VERSION matches but the installed files don't: any shipped script's bytes differ from
+ * its installed copy (or the copy is missing), or version.js lacks the expected text. So an edited script is picked up while the version
+ * number stays the same in development, and a damaged install is repaired. It returns "installed" when there was no VERSION, "updated"
+ * when it copied because the version or any file differed (Affinity caches old modules, so the designer must run Geo – Connect again),
+ * and "current" when everything already matched, even under `force` (which still rewrites the files). It removes only the names in
+ * OBSOLETE and never touches any other file there. Never throws.
  */
 export function ensureScripts(home: string, src: { dir: string }, version: string, opts: { force?: boolean } = {}): ScriptsResult {
   try {
@@ -39,17 +55,18 @@ export function ensureScripts(home: string, src: { dir: string }, version: strin
     const versionFile = path.join(dest, "VERSION");
     let previous: string | null = null;
     try { previous = readFileSync(versionFile, "utf8").trim(); } catch { /* none yet */ }
-    if (previous === version && !opts.force) return { status: "current" };
     const files = readdirSync(src.dir).filter((f) => f.endsWith(".js") && f !== "loader.js"); // the loader text is read from resources, never installed
+    const unchanged = previous === version && installedMatches(src.dir, dest, files, version);
+    if (unchanged && !opts.force) return { status: "current" };
     mkdirSync(dest, { recursive: true });
     for (const f of files) copyFileSync(path.join(src.dir, f), path.join(dest, f));
     for (const old of OBSOLETE) {
       if (!files.includes(old) && existsSync(path.join(dest, old))) rmSync(path.join(dest, old));
     }
     // version.js is shipped too: connect.js reads it at start and reports it, so the app can tell a re-run Geo – Connect from an old poller.
-    writeFileSync(path.join(dest, "version.js"), `module.exports = ${JSON.stringify(version)};\n`);
+    writeFileSync(path.join(dest, "version.js"), versionJs(version));
     writeFileSync(versionFile, version);
-    return { status: previous === null ? "installed" : "updated" };
+    return { status: previous === null ? "installed" : unchanged ? "current" : "updated" };
   } catch (e) {
     return { status: "failed", reason: (e as Error).message };
   }

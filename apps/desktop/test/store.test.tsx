@@ -42,6 +42,32 @@ describe("store polling", () => {
     expect(calls.length).toBe(before);
   });
 
+  it("selects the first location on load, keeps a choice, and resets it when that location is removed", async () => {
+    vi.useRealTimers();
+    const loc = (id: string) => ({ id, name: id, placeName: "", kind: "box", ring: [], contextM: 0, dataVersion: 1, fetchedAt: null });
+    let locations = [loc("loc-1"), loc("loc-2")];
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      urls.push(url);
+      const asked = new URL(url, "http://x").searchParams.get("location");
+      if (asked && !locations.some((l) => l.id === asked)) return reply({ error: "There's no location with that id." }, 400);
+      return reply({ project: { ...project, locations }, dirty: false, counts: { buildings: asked === "loc-2" ? 2 : 1 } });
+    }));
+    await getActions().refreshProject();
+    expect(getApp().selectedLocationId).toBe("loc-1");
+    expect(getApp().counts).toEqual({ buildings: 1 });
+
+    getActions().selectLocation("loc-2");
+    expect(getApp().selectedLocationId).toBe("loc-2");
+    await vi.waitFor(() => expect(getApp().counts).toEqual({ buildings: 2 })); // the selected location's counts
+    expect(urls).toContain("/api/project?location=loc-2");
+
+    locations = [loc("loc-1")];
+    await getActions().refreshProject();
+    expect(getApp().selectedLocationId).toBe("loc-1");
+    expect(getApp().counts).toEqual({ buildings: 1 });
+  });
+
   it("a map with no target reads \"Not sent\" whatever its server status", () => {
     expect(badgeFor({ target: null }, "Up to date")).toBe("Not sent");
     expect(badgeFor({ target: { docId: "d", docTitle: "D" } }, "Changed since sent")).toBe("Changed since sent");
